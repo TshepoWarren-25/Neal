@@ -1,0 +1,86 @@
+---
+- name: Configure Rewards Web Tier
+  hosts: webservers
+  become: yes
+  vars:
+    app_port: 8080
+    app_user: rewards
+    log_file: /var/log/rewards.log
+
+  tasks:
+    - name: Create dedicated application user
+      user:
+        name: "{{ app_user }}"
+        shell: /sbin/nologin # Security Best Practice: User cannot login interactively
+
+    - name: Security Baseline - Latest OS updates
+      yum:
+        name: "*"
+        state: latest
+
+    - name: Install Runtime - Python 3
+      yum:
+        name: python3
+        state: present
+
+    - name: Deploy Service Artifact - health.py
+      copy:
+        src: ../app/health.py
+        dest: "/home/{{ app_user }}/health.py"
+        owner: "{{ app_user }}"
+        mode: '0644'
+
+    - name: Runtime Secrets - Fetch from AWS SSM Parameter Store
+      shell: |
+        aws ssm get-parameter --name "/rewards/dev/APP_SECRET" --with-decryption --query "Parameter.Value" --output text --region us-east-1
+      register: app_secret_result
+      changed_when: false
+
+    - name: Lifecycle Management - Create Systemd unit file
+      template:
+        src: service.j2
+        dest: /etc/systemd/system/rewards.service
+      vars:
+        app_secret: "{{ app_secret_result.stdout }}"
+
+    - name: Observability - Ensure application log file exists
+      file:
+        path: "{{ log_file }}"
+        state: touch
+        owner: "{{ app_user }}"
+        mode: '0644'
+
+    - name: Deployment - Reload and start rewards service
+      systemd:
+        name: rewards
+        state: restarted
+        enabled: yes
+        daemon_reload: yes
+
+    - name: Infrastructure - Install Unified CloudWatch Agent
+      yum:
+        name: amazon-cloudwatch-agent
+        state: present
+
+    - name: Observability - Configure Log Shipping to CloudWatch
+      copy:
+        content: |
+          {
+            "logs": {
+              "logs_collected": {
+                "files": {
+                  "collect_list": [
+                    {
+                      "file_path": "{{ log_file }}",
+                      "log_group_name": "/aws/ec2/rewards-web-server",
+                      "log_stream_name": "{instance_id}"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        dest: /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+
+    - name: Observability - Activate CloudWatch Agent
+      command: /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json

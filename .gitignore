@@ -1,0 +1,14 @@
+# Terraform files
+.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl
+*.tfvars
+
+# Ansible temporary files
+ansible/inventory.ini
+ansible/key.pem
+
+# OS files
+.DS_Store
+Thumbs.db

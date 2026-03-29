@@ -1,0 +1,53 @@
+name: AWS IaC & Linux Config Deployment
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  terraform:
+    name: Terraform Plan & Apply
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: "us-east-1"
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Install Ansible
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ansible
+
+      - name: Create SSH Key for Ansible
+        run: |
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ansible/key.pem
+          chmod 600 ansible/key.pem
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: terraform
+
+      - name: Terraform Validate
+        run: terraform validate
+        working-directory: terraform
+
+      - name: Terraform Plan
+        if: github.event_name == 'pull_request'
+        run: terraform plan -var="ssh_private_key_path=../ansible/key.pem"
+        working-directory: terraform
+
+      - name: Terraform Apply
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: terraform apply -auto-approve -var="ssh_private_key_path=../ansible/key.pem"
+        working-directory: terraform
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: "False"

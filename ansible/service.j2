@@ -1,0 +1,17 @@
+[Unit]
+Description=Rewards Health Service
+After=network.target
+
+[Service]
+User={{ app_user }}
+WorkingDirectory=/home/{{ app_user }}
+Environment=APP_PORT={{ app_port }}
+Environment=APP_SECRET={{ app_secret }}
+Environment=COMMIT_SHA={{ commit_sha | default('unknown') }}
+ExecStart=/usr/bin/python3 /home/{{ app_user }}/health.py
+Restart=always
+StandardOutput=append:{{ log_file }}
+StandardError=append:{{ log_file }}
+
+[Install]
+WantedBy=multi-user.target
