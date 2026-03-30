@@ -2,6 +2,11 @@ provider "aws" {
   region = var.aws_region
 }
 
+# Generate a unique suffix to avoid name collisions in repeated runs
+resource "random_id" "suffix" {
+  byte_length = 4
+}
+
 # --- VPC Configuration ---
 # Provisioning a single-AZ VPC to stick to Free Tier limits.
 resource "aws_vpc" "main" {
@@ -130,7 +135,7 @@ resource "aws_security_group" "web" {
 
 # --- ALB ---
 resource "aws_lb" "main" {
-  name               = "nealstreet-alb"
+  name               = "nealstreet-alb-${random_id.suffix.hex}"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
@@ -142,7 +147,7 @@ resource "aws_lb" "main" {
 }
 
 resource "aws_lb_target_group" "web" {
-  name     = "nealstreet-tg"
+  name     = "nealstreet-tg-${random_id.suffix.hex}"
   port     = var.app_port
   protocol = "HTTP"
   vpc_id   = aws_vpc.main.id
@@ -170,7 +175,7 @@ resource "aws_lb_listener" "http" {
 # --- Compute Layer (ASG) ---
 # IAM Role for EC2: Granting permissions for SSM and CloudWatch.
 resource "aws_iam_role" "web_role" {
-  name = "nealstreet-web-role"
+  name_prefix = "nealstreet-web-role-"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -205,7 +210,7 @@ resource "aws_key_pair" "deployer" {
 }
 
 resource "aws_iam_instance_profile" "web_profile" {
-  name = "nealstreet-web-profile"
+  name_prefix = "nealstreet-web-profile-"
   role = aws_iam_role.web_role.name
 }
 
@@ -246,7 +251,7 @@ resource "aws_launch_template" "web" {
 
 # Auto Scaling Group: Manages instance lifecycle and scaling.
 resource "aws_autoscaling_group" "web" {
-  name                = "nealstreet-asg"
+  name_prefix         = "nealstreet-asg-"
   desired_capacity    = 1
   max_size            = 2
   min_size            = 1
