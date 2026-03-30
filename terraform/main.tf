@@ -278,7 +278,7 @@ resource "aws_autoscaling_group" "web" {
 
 # --- Observability ---
 resource "aws_cloudwatch_log_group" "app_logs" {
-  name              = "/aws/ec2/nealstreet-web-server"
+  name              = "/aws/ec2/nealstreet-web-server-${random_id.suffix.hex}"
   retention_in_days = 7
 }
 
@@ -288,6 +288,7 @@ resource "aws_ssm_parameter" "app_secret" {
   description = "Demo application secret"
   type        = "SecureString"
   value       = "FIXME_OVERRIDE_OUTSIDE_REPO" # Placeholder, user would set this manually or via CI
+  overwrite   = true                         # Allow repeated runs to update the value
   
   lifecycle {
     ignore_changes = [value]
@@ -325,7 +326,7 @@ resource "null_resource" "ansible_provisioner" {
   provisioner "local-exec" {
     # Check if the private key file is present and not empty. 
     # Use '|| echo' to ensure Terraform doesn't fail if Ansible is skipped.
-    command = "[ -s ${var.ssh_private_key_path} ] && ansible-playbook -i ${local_file.ansible_inventory[0].filename} ${path.module}/../ansible/playbook.yml || echo 'Skipping Ansible: Key not found or empty.'"
+    command = "[ -s ${var.ssh_private_key_path} ] && ansible-playbook -i ${local_file.ansible_inventory[0].filename} -e 'log_group_name=${aws_cloudwatch_log_group.app_logs.name} ssm_parameter_name=${aws_ssm_parameter.app_secret.name}' ${path.module}/../ansible/playbook.yml || echo 'Skipping Ansible: Key not found or empty.'"
   }
 
   depends_on = [local_file.ansible_inventory, aws_lb_listener.http]
