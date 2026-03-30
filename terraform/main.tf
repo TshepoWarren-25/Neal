@@ -2,11 +2,6 @@ provider "aws" {
   region = var.aws_region
 }
 
-# Find which Availability Zones are actually available in this account.
-data "aws_availability_zones" "available" {
-  state = "available"
-}
-
 # --- VPC Configuration ---
 # Provisioning a single-AZ VPC to stick to Free Tier limits.
 resource "aws_vpc" "main" {
@@ -35,7 +30,7 @@ resource "aws_subnet" "public_1" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.1.0/24"
   map_public_ip_on_launch = true
-  availability_zone       = data.aws_availability_zones.available.names[0]
+  availability_zone       = var.availability_zones[0]
 
   tags = {
     Name        = "nealstreet-public-subnet-1"
@@ -47,7 +42,7 @@ resource "aws_subnet" "public_2" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.2.0/24"
   map_public_ip_on_launch = true
-  availability_zone       = data.aws_availability_zones.available.names[1]
+  availability_zone       = var.availability_zones[1]
 
   tags = {
     Name        = "nealstreet-public-subnet-2"
@@ -173,33 +168,6 @@ resource "aws_lb_listener" "http" {
 }
 
 # --- Compute Layer (ASG) ---
-# Fetching the latest Amazon Linux 2023 AMI via native EC2 search.
-data "aws_ami" "al2023" {
-  most_recent = true
-  owners      = ["amazon"]
-
-  # Only find available images to prevent 'Exit Code 1' during plan
-  filter {
-    name   = "state"
-    values = ["available"]
-  }
-
-  filter {
-    name   = "name"
-    values = ["al2023-ami-*-x86_64"] # Broadened search to ensure it finds the AL2023 image
-  }
-
-  filter {
-    name   = "architecture"
-    values = ["x86_64"]
-  }
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
-}
-
 # IAM Role for EC2: Granting permissions for SSM and CloudWatch.
 resource "aws_iam_role" "web_role" {
   name = "nealstreet-web-role"
@@ -244,7 +212,7 @@ resource "aws_iam_instance_profile" "web_profile" {
 # Launch Template: Defines the blueprints for the EC2 instances.
 resource "aws_launch_template" "web" {
   name_prefix   = "nealstreet-web-"
-  image_id      = data.aws_ami.al2023.id
+  image_id      = var.ami_id
   instance_type = var.instance_type
   key_name      = one(aws_key_pair.deployer[*].key_name)
 

@@ -30,3 +30,15 @@ variable "ssh_public_key" {
   sensitive   = true
   default     = "" 
 }
+
+variable "ami_id" {
+  description = "Hardcoded AMI ID for us-east-1 to bypass DescribeImages restrictions"
+  type        = string
+  default     = "ami-0440d3b780d96b29d" # Amazon Linux 2023 (us-east-1)
+}
+
+variable "availability_zones" {
+  description = "Hardcoded AZs for us-east-1 to bypass DescribeAvailabilityZones restrictions"
+  type        = list(string)
+  default     = ["us-east-1a", "us-east-1b"]
+}
