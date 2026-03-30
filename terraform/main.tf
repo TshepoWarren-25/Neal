@@ -151,9 +151,15 @@ resource "aws_lb_listener" "http" {
 }
 
 # --- Compute Layer (ASG) ---
-# Fetching the latest Amazon Linux 2023 AMI via SSM Parameter Store.
-data "aws_ssm_parameter" "ami" {
-  name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64"
+# Fetching the latest Amazon Linux 2023 AMI via native EC2 search.
+data "aws_ami" "al2023" {
+  most_recent = true
+  owners      = ["amazon"]
+
+  filter {
+    name   = "name"
+    values = ["al2023-ami-2023.*-x86_64"]
+  }
 }
 
 # IAM Role for EC2: Granting permissions for SSM and CloudWatch.
@@ -200,7 +206,7 @@ resource "aws_iam_instance_profile" "web_profile" {
 # Launch Template: Defines the blueprints for the EC2 instances.
 resource "aws_launch_template" "web" {
   name_prefix   = "nealstreet-web-"
-  image_id      = data.aws_ssm_parameter.ami.value
+  image_id      = data.aws_ami.al2023.id
   instance_type = var.instance_type
   key_name      = one(aws_key_pair.deployer[*].key_name)
 
