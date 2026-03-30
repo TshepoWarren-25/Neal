@@ -25,7 +25,8 @@ variable "ssh_private_key_path" {
 }
 
 variable "ssh_public_key" {
-  description = "The Public Key string to associate with the EC2 Key Pair"
+  description = "The Public Key string to associate with the EC2 Key Pair (Required for SSH access)"
   type        = string
   sensitive   = true
+  default     = "" 
 }
