@@ -260,7 +260,7 @@ resource "aws_autoscaling_group" "web" {
 
   tag {
     key                 = "Name"
-    value               = "rewards-web-server"
+    value               = "nealstreet-web-server"
     propagate_at_launch = true
   }
   
@@ -273,13 +273,13 @@ resource "aws_autoscaling_group" "web" {
 
 # --- Observability ---
 resource "aws_cloudwatch_log_group" "app_logs" {
-  name              = "/aws/ec2/rewards-web-server"
+  name              = "/aws/ec2/nealstreet-web-server"
   retention_in_days = 7
 }
 
 # --- Secrets (Demo) ---
 resource "aws_ssm_parameter" "app_secret" {
-  name        = "/rewards/dev/APP_SECRET"
+  name        = "/nealstreet/dev/APP_SECRET"
   description = "Demo application secret"
   type        = "SecureString"
   value       = "FIXME_OVERRIDE_OUTSIDE_REPO" # Placeholder, user would set this manually or via CI
@@ -293,7 +293,7 @@ resource "aws_ssm_parameter" "app_secret" {
 # Dynamically fetch the public IP of the instance created by the ASG.
 data "aws_instances" "web" {
   instance_tags = {
-    Name = "rewards-web-server"
+    Name = "nealstreet-web-server"
   }
   instance_state_names = ["running"]
   

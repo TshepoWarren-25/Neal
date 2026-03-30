@@ -4,8 +4,8 @@
   become: yes
   vars:
     app_port: 8080
-    app_user: rewards
-    log_file: /var/log/rewards.log
+    app_user: nealstreet
+    log_file: /var/log/nealstreet.log
 
   tasks:
     - name: Create dedicated application user
@@ -39,7 +39,7 @@
     - name: Lifecycle Management - Create Systemd unit file
       template:
         src: service.j2
-        dest: /etc/systemd/system/rewards.service
+        dest: /etc/systemd/system/nealstreet.service
       vars:
         app_secret: "{{ app_secret_result.stdout }}"
 
@@ -52,7 +52,7 @@
 
     - name: Deployment - Reload and start rewards service
       systemd:
-        name: rewards
+        name: nealstreet
         state: restarted
         enabled: yes
         daemon_reload: yes
@@ -72,7 +72,7 @@
                   "collect_list": [
                     {
                       "file_path": "{{ log_file }}",
-                      "log_group_name": "/aws/ec2/rewards-web-server",
+                      "log_group_name": "/aws/ec2/nealstreet-web-server",
                       "log_stream_name": "{instance_id}"
                     }
                   ]
