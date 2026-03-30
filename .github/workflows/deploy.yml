@@ -42,12 +42,12 @@ jobs:
 
       - name: Terraform Plan
         if: github.event_name == 'pull_request'
-        run: terraform plan -var="ssh_private_key_path=../ansible/key.pem"
+        run: terraform plan -var="ssh_private_key_path=../ansible/key.pem" -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}"
         working-directory: terraform
 
       - name: Terraform Apply
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: terraform apply -auto-approve -var="ssh_private_key_path=../ansible/key.pem"
+        run: terraform apply -auto-approve -var="ssh_private_key_path=../ansible/key.pem" -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}"
         working-directory: terraform
         env:
           ANSIBLE_HOST_KEY_CHECKING: "False"

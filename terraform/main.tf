@@ -185,6 +185,12 @@ resource "aws_iam_role_policy_attachment" "logs" {
   policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
 }
 
+# Key Pair for SSH access.
+resource "aws_key_pair" "deployer" {
+  key_name   = "nealstreet-deployer-key"
+  public_key = var.ssh_public_key
+}
+
 resource "aws_iam_instance_profile" "web_profile" {
   name = "nealstreet-web-profile"
   role = aws_iam_role.web_role.name
@@ -195,6 +201,7 @@ resource "aws_launch_template" "web" {
   name_prefix   = "nealstreet-web-"
   image_id      = data.aws_ssm_parameter.ami.value
   instance_type = var.instance_type
+  key_name      = aws_key_pair.deployer.key_name
 
   iam_instance_profile {
     name = aws_iam_instance_profile.web_profile.name
@@ -296,7 +303,9 @@ resource "null_resource" "ansible_provisioner" {
   }
 
   provisioner "local-exec" {
-    command = "ansible-playbook -i ${local_file.ansible_inventory.filename} ${path.module}/../ansible/playbook.yml"
+    # Check if the private key file is present and not empty. 
+    # Use '|| echo' to ensure Terraform doesn't fail if Ansible is skipped.
+    command = "[ -s ${var.ssh_private_key_path} ] && ansible-playbook -i ${local_file.ansible_inventory.filename} ${path.module}/../ansible/playbook.yml || echo 'Skipping Ansible: Key not found or empty.'"
   }
 
   depends_on = [local_file.ansible_inventory, aws_lb_listener.http]

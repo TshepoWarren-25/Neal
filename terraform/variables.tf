@@ -23,3 +23,9 @@ variable "ssh_private_key_path" {
   type        = string
   default     = "../ansible/key.pem"
 }
+
+variable "ssh_public_key" {
+  description = "The Public Key string to associate with the EC2 Key Pair"
+  type        = string
+  sensitive   = true
+}
