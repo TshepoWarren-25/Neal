@@ -2,11 +2,6 @@ provider "aws" {
   region = var.aws_region
 }
 
-# Generate a unique suffix to avoid name collisions in repeated runs
-resource "random_id" "suffix" {
-  byte_length = 4
-}
-
 # --- VPC Configuration ---
 # Provisioning a single-AZ VPC to stick to Free Tier limits.
 resource "aws_vpc" "main" {
@@ -15,9 +10,9 @@ resource "aws_vpc" "main" {
   enable_dns_support   = true
 
   tags = {
-    Name        = "nealstreet-vpc"
+    Name        = "nealstreet-${var.environment}-vpc-01"
     environment = var.environment
-    service     = "rewards"
+    service     = "nealstreet"
     owner       = var.owner
     cost_center = "payments"
   }
@@ -27,7 +22,7 @@ resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
 
   tags = {
-    Name = "nealstreet-igw"
+    Name = "nealstreet-${var.environment}-igw-01"
   }
 }
 
@@ -38,7 +33,7 @@ resource "aws_subnet" "public_1" {
   availability_zone       = var.availability_zones[0]
 
   tags = {
-    Name        = "nealstreet-public-subnet-1"
+    Name        = "nealstreet-${var.environment}-subnet-01"
     environment = var.environment
   }
 }
@@ -50,7 +45,7 @@ resource "aws_subnet" "public_2" {
   availability_zone       = var.availability_zones[1]
 
   tags = {
-    Name        = "nealstreet-public-subnet-2"
+    Name        = "nealstreet-${var.environment}-subnet-02"
     environment = var.environment
   }
 }
@@ -64,7 +59,7 @@ resource "aws_route_table" "public" {
   }
 
   tags = {
-    Name = "nealstreet-public-rt"
+    Name = "nealstreet-${var.environment}-public-rt-01"
   }
 }
 
@@ -81,7 +76,7 @@ resource "aws_route_table_association" "public_2" {
 # --- Security Groups ---
 # ALB Security Group: Perimeter security. Allows HTTP from any source.
 resource "aws_security_group" "alb" {
-  name        = "nealstreet-alb-sg"
+  name_prefix = "nealST-${var.environment}-alb-sg-01-" # Using short prefix for ALB
   description = "Allow HTTP inbound to ALB"
   vpc_id      = aws_vpc.main.id
 
@@ -103,7 +98,7 @@ resource "aws_security_group" "alb" {
 # Web Server Security Group: Application tier security.
 # Restricts traffic so that only the ALB can reach the web service.
 resource "aws_security_group" "web" {
-  name        = "nealstreet-web-sg"
+  name_prefix = "nealST-${var.environment}-web-sg-01-" # Using short prefix for Web
   description = "Allow traffic from ALB only"
   vpc_id      = aws_vpc.main.id
 
@@ -135,19 +130,19 @@ resource "aws_security_group" "web" {
 
 # --- ALB ---
 resource "aws_lb" "main" {
-  name               = "nealstreet-alb-${random_id.suffix.hex}"
+  name               = "nealST-${var.environment}-alb-01"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
   subnets            = [aws_subnet.public_1.id, aws_subnet.public_2.id]
 
   tags = {
-    Name = "nealstreet-alb"
+    Name = "nealstreet-${var.environment}-alb-01"
   }
 }
 
 resource "aws_lb_target_group" "web" {
-  name     = "nealstreet-tg-${random_id.suffix.hex}"
+  name     = "nealST-${var.environment}-tg-01"
   port     = var.app_port
   protocol = "HTTP"
   vpc_id   = aws_vpc.main.id
@@ -175,7 +170,7 @@ resource "aws_lb_listener" "http" {
 # --- Compute Layer (ASG) ---
 # IAM Role for EC2: Granting permissions for SSM and CloudWatch.
 resource "aws_iam_role" "web_role" {
-  name_prefix = "nealstreet-web-role-"
+  name_prefix = "nealST-${var.environment}-web-role-01-"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -210,7 +205,7 @@ resource "aws_key_pair" "deployer" {
 }
 
 resource "aws_iam_instance_profile" "web_profile" {
-  name_prefix = "nealstreet-web-profile-"
+  name_prefix = "nealST-${var.environment}-web-profile-01-"
   role = aws_iam_role.web_role.name
 }
 
@@ -245,13 +240,13 @@ resource "aws_launch_template" "web" {
   )
 
   tags = {
-    Name = "nealstreet-web-template"
+    Name = "nealstreet-${var.environment}-web-lt-01"
   }
 }
 
 # Auto Scaling Group: Manages instance lifecycle and scaling.
 resource "aws_autoscaling_group" "web" {
-  name_prefix         = "nealstreet-asg-"
+  name_prefix         = "nealST-${var.environment}-asg-01-"
   desired_capacity    = 1
   max_size            = 2
   min_size            = 1
@@ -265,7 +260,7 @@ resource "aws_autoscaling_group" "web" {
 
   tag {
     key                 = "Name"
-    value               = "nealstreet-web-server"
+    value               = "nealstreet-${var.environment}-web-01"
     propagate_at_launch = true
   }
   
@@ -278,13 +273,13 @@ resource "aws_autoscaling_group" "web" {
 
 # --- Observability ---
 resource "aws_cloudwatch_log_group" "app_logs" {
-  name              = "/aws/ec2/nealstreet-web-server-${random_id.suffix.hex}"
+  name              = "/aws/ec2/nealstreet-${var.environment}-web-01"
   retention_in_days = 7
 }
 
 # --- Secrets (Demo) ---
 resource "aws_ssm_parameter" "app_secret" {
-  name        = "/nealstreet/dev/APP_SECRET"
+  name        = "/nealstreet/${var.environment}/web/app_secret"
   description = "Demo application secret"
   type        = "SecureString"
   value       = "FIXME_OVERRIDE_OUTSIDE_REPO" # Placeholder, user would set this manually or via CI
@@ -299,7 +294,7 @@ resource "aws_ssm_parameter" "app_secret" {
 # Dynamically fetch the public IP of the instance created by the ASG.
 data "aws_instances" "web" {
   instance_tags = {
-    Name = "nealstreet-web-server"
+    Name = "nealstreet-${var.environment}-web-01"
   }
   instance_state_names = ["running"]
   
