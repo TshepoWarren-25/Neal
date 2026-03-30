@@ -202,7 +202,7 @@ resource "aws_launch_template" "web" {
   name_prefix   = "nealstreet-web-"
   image_id      = data.aws_ssm_parameter.ami.value
   instance_type = var.instance_type
-  key_name      = var.ssh_public_key != "" ? aws_key_pair.deployer[0].key_name : null
+  key_name      = one(aws_key_pair.deployer[*].key_name)
 
   iam_instance_profile {
     name = aws_iam_instance_profile.web_profile.name
@@ -291,22 +291,24 @@ data "aws_instances" "web" {
 
 # Generate the Ansible inventory file.
 resource "local_file" "ansible_inventory" {
-  content  = "[webservers]\n${data.aws_instances.web.public_ips[0]} ansible_user=ec2-user ansible_ssh_private_key_file=${var.ssh_private_key_path}"
+  count    = var.ssh_public_key != "" ? 1 : 0
+  content  = "[webservers]\n${try(data.aws_instances.web.public_ips[0], "127.0.0.1")} ansible_user=ec2-user ansible_ssh_private_key_file=${var.ssh_private_key_path}"
   filename = "${path.module}/../ansible/inventory.ini"
 }
 
 # Trigger Ansible Playbook execution.
 resource "null_resource" "ansible_provisioner" {
+  count = var.ssh_public_key != "" ? 1 : 0
   triggers = {
     # Re-run if the instance IP changes or if the playbook content changes.
-    instance_ip = data.aws_instances.web.public_ips[0]
+    instance_ip = try(data.aws_instances.web.public_ips[0], "none")
     playbook_hash = filemd5("${path.module}/../ansible/playbook.yml")
   }
 
   provisioner "local-exec" {
     # Check if the private key file is present and not empty. 
     # Use '|| echo' to ensure Terraform doesn't fail if Ansible is skipped.
-    command = "[ -s ${var.ssh_private_key_path} ] && ansible-playbook -i ${local_file.ansible_inventory.filename} ${path.module}/../ansible/playbook.yml || echo 'Skipping Ansible: Key not found or empty.'"
+    command = "[ -s ${var.ssh_private_key_path} ] && ansible-playbook -i ${local_file.ansible_inventory[0].filename} ${path.module}/../ansible/playbook.yml || echo 'Skipping Ansible: Key not found or empty.'"
   }
 
   depends_on = [local_file.ansible_inventory, aws_lb_listener.http]
