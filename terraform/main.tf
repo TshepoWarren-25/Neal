@@ -2,6 +2,11 @@ provider "aws" {
   region = var.aws_region
 }
 
+# Find which Availability Zones are actually available in this account.
+data "aws_availability_zones" "available" {
+  state = "available"
+}
+
 # --- VPC Configuration ---
 # Provisioning a single-AZ VPC to stick to Free Tier limits.
 resource "aws_vpc" "main" {
@@ -26,14 +31,26 @@ resource "aws_internet_gateway" "main" {
   }
 }
 
-resource "aws_subnet" "public" {
+resource "aws_subnet" "public_1" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.1.0/24"
   map_public_ip_on_launch = true
-  availability_zone       = "${var.aws_region}a"
+  availability_zone       = data.aws_availability_zones.available.names[0]
 
   tags = {
-    Name        = "nealstreet-public-subnet"
+    Name        = "nealstreet-public-subnet-1"
+    environment = var.environment
+  }
+}
+
+resource "aws_subnet" "public_2" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.2.0/24"
+  map_public_ip_on_launch = true
+  availability_zone       = data.aws_availability_zones.available.names[1]
+
+  tags = {
+    Name        = "nealstreet-public-subnet-2"
     environment = var.environment
   }
 }
@@ -51,8 +68,13 @@ resource "aws_route_table" "public" {
   }
 }
 
-resource "aws_route_table_association" "public" {
-  subnet_id      = aws_subnet.public.id
+resource "aws_route_table_association" "public_1" {
+  subnet_id      = aws_subnet.public_1.id
+  route_table_id = aws_route_table.public.id
+}
+
+resource "aws_route_table_association" "public_2" {
+  subnet_id      = aws_subnet.public_2.id
   route_table_id = aws_route_table.public.id
 }
 
@@ -117,7 +139,7 @@ resource "aws_lb" "main" {
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
-  subnets            = [aws_subnet.public.id]
+  subnets            = [aws_subnet.public_1.id, aws_subnet.public_2.id]
 
   tags = {
     Name = "nealstreet-alb"
@@ -156,9 +178,25 @@ data "aws_ami" "al2023" {
   most_recent = true
   owners      = ["amazon"]
 
+  # Only find available images to prevent 'Exit Code 1' during plan
+  filter {
+    name   = "state"
+    values = ["available"]
+  }
+
   filter {
     name   = "name"
-    values = ["al2023-ami-2023.*-x86_64"]
+    values = ["al2023-ami-*-x86_64"] # Broadened search to ensure it finds the AL2023 image
+  }
+
+  filter {
+    name   = "architecture"
+    values = ["x86_64"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
   }
 }
 
@@ -244,7 +282,7 @@ resource "aws_autoscaling_group" "web" {
   desired_capacity    = 1
   max_size            = 2
   min_size            = 1
-  vpc_zone_identifier = [aws_subnet.public.id]
+  vpc_zone_identifier = [aws_subnet.public_1.id, aws_subnet.public_2.id]
   target_group_arns   = [aws_lb_target_group.web.arn]
 
   launch_template {
