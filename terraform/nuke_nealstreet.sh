@@ -21,6 +21,22 @@ for ASG in $ASG_NAMES; do
     aws autoscaling delete-auto-scaling-group --auto-scaling-group-name "$ASG" --force-delete --region $REGION
 done
 
+if [ ! -z "$ASG_NAMES" ]; then
+    echo "⏳ Waiting for ASGs to fully terminate (up to 120s)..."
+    for i in {1..24}; do
+        REMAINING=$(aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?starts_with(AutoScalingGroupName, '$PROJECT-asg')].AutoScalingGroupName" --output text --region $REGION)
+        if [ -z "$REMAINING" ]; then break; fi
+        sleep 5
+    done
+fi
+
+# 1.5 Delete Key Pairs
+KEY_NAMES=$(aws ec2 describe-key-pairs --query "KeyPairs[?starts_with(KeyName, '$PROJECT-key')].KeyName" --output text --region $REGION)
+for KEY in $KEY_NAMES; do
+    echo "Deleting Key Pair: $KEY"
+    aws ec2 delete-key-pair --key-name "$KEY" --region $REGION
+done
+
 # 2. Delete Application Load Balancers
 ALB_ARNS=$(aws elbv2 describe-load-balancers --query "LoadBalancers[?starts_with(LoadBalancerName, '$PROJECT-alb')].LoadBalancerArn" --output text --region $REGION)
 for ALB in $ALB_ARNS; do
