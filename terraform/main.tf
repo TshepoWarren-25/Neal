@@ -305,6 +305,13 @@ resource "aws_ssm_parameter" "app_secret" {
   }
 }
 
+# --- Wait for Instance Readiness ---
+# Give the ASG enough time to start the instances and assign public IPs.
+resource "time_sleep" "wait_for_instance" {
+  depends_on = [aws_autoscaling_group.web]
+  create_duration = "120s"
+}
+
 # --- Ansible Deployment Integration ---
 # Dynamically fetch the public IP of the instance created by the ASG.
 data "aws_instances" "web" {
@@ -314,7 +321,7 @@ data "aws_instances" "web" {
   instance_state_names = ["running"]
   
   # Ensure we wait for the ASG to actually launch the instance.
-  depends_on = [aws_autoscaling_group.web]
+  depends_on = [time_sleep.wait_for_instance]
 }
 
 # Generate the Ansible inventory file.
@@ -332,9 +339,14 @@ resource "null_resource" "ansible_provisioner" {
   }
 
   provisioner "local-exec" {
-    # Run Ansible only after checking keys are present (either manual or auto-generated).
-    command = "ansible-playbook -i ${local_file.ansible_inventory.filename} -e 'log_group_name=${aws_cloudwatch_log_group.app_logs.name} ssm_parameter_name=${aws_ssm_parameter.app_secret.name}' ${path.module}/../ansible/playbook.yml"
+    # Dynamically find the Public IP at runtime just before Ansible starts.
+    # This solves the race condition where the ASG hasn't assigned an IP yet during the Plan stage.
+    command = <<EOT
+      PUBLIC_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=nealstreet-${var.environment}-web-01" "Name=instance-state-name,Values=running" --query "Reservations[].Instances[0].PublicIpAddress" --output text --region ${var.aws_region})
+      echo "[webservers]\n$PUBLIC_IP ansible_user=ec2-user ansible_ssh_private_key_file=${var.ssh_private_key_path}" > ${path.module}/../ansible/inventory.ini
+      ansible-playbook -i ${path.module}/../ansible/inventory.ini -e 'log_group_name=${aws_cloudwatch_log_group.app_logs.name} ssm_parameter_name=${aws_ssm_parameter.app_secret.name}' ${path.module}/../ansible/playbook.yml
+    EOT
   }
 
-  depends_on = [local_file.ansible_inventory, aws_lb_listener.http]
+  depends_on = [local_file.ansible_inventory, aws_lb_listener.http, time_sleep.wait_for_instance]
 }
