@@ -197,11 +197,26 @@ resource "aws_iam_role_policy_attachment" "logs" {
   policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
 }
 
-# Key Pair for SSH access (Optional: Only created if ssh_public_key is provided).
+# --- Access Management ---
+# Automatically generate a temporary SSH key if the user hasn't provided one yet.
+# This ensures that Ansible can always launch and configure the project.
+resource "tls_private_key" "auto" {
+  algorithm = "RSA"
+  rsa_bits  = 4096
+}
+
+# Save the auto-generated private key to the path expected by Ansible.
+resource "local_file" "auto_private_key" {
+  count    = var.ssh_public_key == "" ? 1 : 0
+  content  = tls_private_key.auto.private_key_pem
+  filename = abspath("${path.module}/${var.ssh_private_key_path}")
+  file_permission = "0600"
+}
+
+# Key Pair for SSH access: Uses either the provided key or the auto-generated one.
 resource "aws_key_pair" "deployer" {
-  count      = var.ssh_public_key != "" ? 1 : 0
-  key_name   = "nealstreet-deployer-key"
-  public_key = var.ssh_public_key
+  key_name   = "nealST-${var.environment}-key-01"
+  public_key = var.ssh_public_key != "" ? var.ssh_public_key : tls_private_key.auto.public_key_openssh
 }
 
 resource "aws_iam_instance_profile" "web_profile" {
@@ -211,10 +226,10 @@ resource "aws_iam_instance_profile" "web_profile" {
 
 # Launch Template: Defines the blueprints for the EC2 instances.
 resource "aws_launch_template" "web" {
-  name_prefix   = "nealstreet-web-"
+  name_prefix   = "nealST-${var.environment}-web-lt-01-"
   image_id      = var.ami_id
   instance_type = var.instance_type
-  key_name      = one(aws_key_pair.deployer[*].key_name)
+  key_name      = aws_key_pair.deployer.key_name
 
   iam_instance_profile {
     name = aws_iam_instance_profile.web_profile.name
@@ -304,14 +319,12 @@ data "aws_instances" "web" {
 
 # Generate the Ansible inventory file.
 resource "local_file" "ansible_inventory" {
-  count    = var.ssh_public_key != "" ? 1 : 0
   content  = "[webservers]\n${try(data.aws_instances.web.public_ips[0], "127.0.0.1")} ansible_user=ec2-user ansible_ssh_private_key_file=${var.ssh_private_key_path}"
   filename = "${path.module}/../ansible/inventory.ini"
 }
 
 # Trigger Ansible Playbook execution.
 resource "null_resource" "ansible_provisioner" {
-  count = var.ssh_public_key != "" ? 1 : 0
   triggers = {
     # Re-run if the instance IP changes or if the playbook content changes.
     instance_ip = try(data.aws_instances.web.public_ips[0], "none")
@@ -319,9 +332,8 @@ resource "null_resource" "ansible_provisioner" {
   }
 
   provisioner "local-exec" {
-    # Check if the private key file is present and not empty. 
-    # Use '|| echo' to ensure Terraform doesn't fail if Ansible is skipped.
-    command = "[ -s ${var.ssh_private_key_path} ] && ansible-playbook -i ${local_file.ansible_inventory[0].filename} -e 'log_group_name=${aws_cloudwatch_log_group.app_logs.name} ssm_parameter_name=${aws_ssm_parameter.app_secret.name}' ${path.module}/../ansible/playbook.yml || echo 'Skipping Ansible: Key not found or empty.'"
+    # Run Ansible only after checking keys are present (either manual or auto-generated).
+    command = "ansible-playbook -i ${local_file.ansible_inventory.filename} -e 'log_group_name=${aws_cloudwatch_log_group.app_logs.name} ssm_parameter_name=${aws_ssm_parameter.app_secret.name}' ${path.module}/../ansible/playbook.yml"
   }
 
   depends_on = [local_file.ansible_inventory, aws_lb_listener.http]

@@ -27,3 +27,13 @@ output "ssm_parameter_name" {
   description = "The name of the SSM Parameter storing the application secret."
   value       = aws_ssm_parameter.app_secret.name
 }
+
+output "aws_region" {
+  description = "The AWS Region where all resources were created."
+  value       = var.aws_region
+}
+
+output "dashboard_link" {
+  description = "A direct link to see your resources in the AWS Console."
+  value       = "https://${var.aws_region}.console.aws.amazon.com/ec2/v2/home?region=${var.aws_region}#Instances:search=nealstreet"
+}
