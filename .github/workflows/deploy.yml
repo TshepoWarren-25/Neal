@@ -43,6 +43,32 @@ jobs:
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ansible/key.pem
           chmod 600 ansible/key.pem
 
+      - name: 🛠️ Bootstrap - Ensure S3 State Bucket Exists
+        run: |
+          aws s3api head-bucket --bucket "nealstreet-tf-state-414061810385" 2>/dev/null || \
+          aws s3 mb s3://nealstreet-tf-state-414061810385 --region us-east-1
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: "us-east-1"
+
+      - name: 🕵️ Auto-Discovery - Claim ALBs & Target Groups
+        run: |
+          ALB_ARN=$(aws elbv2 describe-load-balancers --names nealST-dev-alb-01 --query "LoadBalancers[0].LoadBalancerArn" --output text --region us-east-1) || ALB_ARN=""
+          TG_ARN=$(aws elbv2 describe-target-groups --names nealST-dev-tg-01 --query "TargetGroups[0].TargetGroupArn" --output text --region us-east-1) || TG_ARN=""
+          if [ ! -z "$ALB_ARN" ]; then
+            echo -e "\nimport {\n  to = aws_lb.main\n  id = \"$ALB_ARN\"\n}\n" >> terraform/imports.tf
+            echo "✅ ALB Import block added for $ALB_ARN"
+          fi
+          if [ ! -z "$TG_ARN" ]; then
+            echo -e "\nimport {\n  to = aws_lb_target_group.web\n  id = \"$TG_ARN\"\n}\n" >> terraform/imports.tf
+            echo "✅ TG Import block added for $TG_ARN"
+          fi
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: "us-east-1"
+
       - name: Terraform Init
         run: terraform init
         working-directory: terraform
