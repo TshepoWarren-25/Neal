@@ -161,7 +161,7 @@ resource "aws_lb" "main" {
 # --- Target Group & Health Checks ---
 # Defines the specific destination for forwarded traffic and monitors health status.
 resource "aws_lb_target_group" "web" {
-  name     = "nealST-${var.environment}-tg-01"
+  name_prefix = "nst-"
   port     = var.app_port
   protocol = "HTTP"
   vpc_id   = aws_vpc.main.id

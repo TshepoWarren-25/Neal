@@ -46,6 +46,12 @@ for ALB in $ALB_ARNS; do
     aws elbv2 delete-load-balancer --load-balancer-arn "$ALB" --region "$REGION" || true
 done
 
+# Wait for ALB to drop its listener locks
+if [ ! -z "$ALB_ARNS" ] && [ "$ALB_ARNS" != "None" ]; then
+    echo "⏳ Waiting 30s for ALB listener locks to drop..."
+    sleep 30
+fi
+
 echo "Finding EVERY Target Group in $REGION..."
 TG_ARNS=$(aws elbv2 describe-target-groups --query "TargetGroups[].TargetGroupArn" --output text --region "$REGION")
 for TG in $TG_ARNS; do
