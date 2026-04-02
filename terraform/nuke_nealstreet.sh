@@ -112,6 +112,12 @@ for VPC_ID in $ALL_NON_DEFAULT_VPCS; do
         # 5f. Scrub Subnets
         aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query "Subnets[].SubnetId" --output text --region "$REGION" | xargs -r aws ec2 delete-subnet --subnet-id --region "$REGION" || true
 
+        # 5g. Scrub Route Tables (Except Main)
+        aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" --query "RouteTables[?Associations[0].Main!=\`true\`].RouteTableId" --output text --region "$REGION" | xargs -r -n1 aws ec2 delete-route-table --route-table-id --region "$REGION" || true
+
+        # 5h. Scrub Network ACLs (Except Default)
+        aws ec2 describe-network-acls --filters "Name=vpc-id,Values=$VPC_ID" --query "NetworkAcls[?IsDefault==\`false\`].NetworkAclId" --output text --region "$REGION" | xargs -r -n1 aws ec2 delete-network-acl --network-acl-id --region "$REGION" || true
+
         # Wait between passes
         sleep 10
     done
@@ -136,6 +142,12 @@ for VPC_ID in $ALL_NON_DEFAULT_VPCS; do
         
         echo "--- REMAINING SECURITY GROUPS in $VPC_ID ---"
         aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" --query "SecurityGroups[].{ID:GroupId, Name:GroupName}" --output table --region "$REGION"
+
+        echo "--- REMAINING ROUTE TABLES in $VPC_ID ---"
+        aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" --query "RouteTables[].{ID:RouteTableId, Main:Associations[0].Main}" --output table --region "$REGION"
+
+        echo "--- REMAINING NACLs in $VPC_ID ---"
+        aws ec2 describe-network-acls --filters "Name=vpc-id,Values=$VPC_ID" --query "NetworkAcls[].{ID:NetworkAclId, Default:IsDefault}" --output table --region "$REGION"
 
         echo "--- REMAINING INSTANCES in $VPC_ID ---"
         aws ec2 describe-instances --filters "Name=vpc-id,Values=$VPC_ID" --query "Reservations[].Instances[].{ID:InstanceId, State:State.Name}" --output table --region "$REGION"
