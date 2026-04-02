@@ -42,6 +42,13 @@ for ALB in $ALB_ARNS; do
     aws elbv2 delete-load-balancer --load-balancer-arn "$ALB" --region "$REGION" || true
 done
 
+if [ ! -z "$ALB_ARNS" ]; then
+    echo "⏳ Waiting for ALBs to finish deleting..."
+    aws elbv2 wait load-balancers-deleted --load-balancer-arns $ALB_ARNS --region "$REGION" > /dev/null 2>&1 || true
+    echo "⏳ Adding 60s cooldown for ALB Ghost ENIs to drop..."
+    sleep 60
+fi
+
 # 4. START RECURSIVE NETWORK SCRUB (5 PASSES)
 echo "🔄 Starting 5-pass recursive network scrub..."
 ALL_NON_DEFAULT_VPCS=$(aws ec2 describe-vpcs --query "Vpcs[?IsDefault==\`false\`].VpcId" --output text --region "$REGION")
@@ -84,11 +91,16 @@ for VPC_ID in $ALL_NON_DEFAULT_VPCS; do
         # 4e. Scrub Security Groups (Crucial for unblocking VPC deletion)
         # We must revoke rules first to break inter-group dependencies
         SG_IDS=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" --query "SecurityGroups[?GroupName!='default'].GroupId" --output text --region "$REGION")
+        
+        echo "Phase 1: Revoking Security Group Rules..."
         for SG in $SG_IDS; do
-            echo "Scrubbing Security Group: $SG"
-            aws ec2 describe-security-group-rules --filters "Name=group-id,Values=$SG" --query "SecurityGroupRules[?IsEgress==\`false\`].SecurityGroupRuleId" --output text --region "$REGION" | xargs -r aws ec2 revoke-security-group-ingress --group-id "$SG" --security-group-rule-ids --region "$REGION" || true
-            aws ec2 describe-security-group-rules --filters "Name=group-id,Values=$SG" --query "SecurityGroupRules[?IsEgress==\`true\`].SecurityGroupRuleId" --output text --region "$REGION" | xargs -r aws ec2 revoke-security-group-egress --group-id "$SG" --security-group-rule-ids --region "$REGION" || true
-            aws ec2 delete-security-group --group-id "$SG" --region "$REGION" || true
+            aws ec2 describe-security-group-rules --filters "Name=group-id,Values=$SG" --query "SecurityGroupRules[?IsEgress==\`false\`].SecurityGroupRuleId" --output text --region "$REGION" | xargs -r -n1 aws ec2 revoke-security-group-ingress --group-id "$SG" --region "$REGION" --security-group-rule-ids > /dev/null 2>&1 || true
+            aws ec2 describe-security-group-rules --filters "Name=group-id,Values=$SG" --query "SecurityGroupRules[?IsEgress==\`true\`].SecurityGroupRuleId" --output text --region "$REGION" | xargs -r -n1 aws ec2 revoke-security-group-egress --group-id "$SG" --region "$REGION" --security-group-rule-ids > /dev/null 2>&1 || true
+        done
+
+        echo "Phase 2: Deleting Security Groups..."
+        for SG in $SG_IDS; do
+            aws ec2 delete-security-group --group-id "$SG" --region "$REGION" > /dev/null 2>&1 || true
         done
 
         # 4f. Scrub Subnets
