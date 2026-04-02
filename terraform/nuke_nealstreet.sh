@@ -1,100 +1,93 @@
 #!/bin/bash
-# --- UNIVERSAL NUKE NEALSTREET DEPLOYMENT ---
-# This script handles the "indestructible VPC" problem by releasing Elastic IPs,
-# waiting for NAT Gateways to reach the 'deleted' state, and stopping error-masking
-# so we can see the exact blocker if one remains.
+# --- ULTIMATE NUCLEAR NUKE: THE RECURSIVE EDITION ---
+# This is our absolute final solution for persistent VPC dependency errors.
+# It uses a 5-pass recursive loop to catch and destroy resources as they release.
 
 REGION="us-east-1"
 PROJECT_PREFIX="nealST-dev"
 VPC_NAME="nealstreet-dev-vpc-01"
 
-set -e
+set -e  # Crucial to see exactly哪一步 fails now.
 
-echo "🚨🚨🚨 STARTING UNIVERSAL ACCOUNT CLEANUP 🚨🚨🚨"
+echo "🚨🚨🚨 STARTING ULTIMATE NUCLEAR CLEANUP 🚨🚨🚨"
 
-# 1. Terminate All Projects Specific Instances (Wait for them to be DEAD)
+# 1. Terminate All instances (Global tagged search)
 echo "Finding instances to terminate..."
 INSTANCE_IDS=$(aws ec2 describe-instances --filters "Name=instance-state-name,Values=pending,running,stopping,stopped" "Name=tag:Name,Values=nealstreet*" --query "Reservations[].Instances[].InstanceId" --output text --region "$REGION")
 if [ ! -z "$INSTANCE_IDS" ] && [ "$INSTANCE_IDS" != "None" ]; then
     echo "⚠️ Terminating instances: $INSTANCE_IDS"
     aws ec2 terminate-instances --instance-ids $INSTANCE_IDS --region "$REGION" > /dev/null
-    aws ec2 wait instance-terminated --instance-ids $INSTANCE_IDS --region "$REGION"
 fi
 
-# 2. Delete ALL NAT Gateways and WAIT (They block VPC deletion for ~5 minutes)
-echo "Cleaning NAT Gateways..."
+# 2. Delete ALL NAT Gateways and WAIT (THEY ARE THE BIGGEST BLOCKER)
+echo "Finding NAT Gateways..."
 NAT_GW_IDS=$(aws ec2 describe-nat-gateways --filter "Name=state,Values=pending,available,deleting" --query "NatGateways[].NatGatewayId" --output text --region "$REGION")
 for NAT in $NAT_GW_IDS; do
-    echo "Deleting NAT Gateway: $NAT"
+    echo "Deleting NAT Gateway: $NAT..."
     aws ec2 delete-nat-gateway --nat-gateway-id "$NAT" --region "$REGION" || true
 done
 
 if [ ! -z "$NAT_GW_IDS" ]; then
-    echo "⏳ Waiting for NAT Gateways to reach 'deleted' state (This takes up to 5 mins)..."
+    echo "⏳ Waiting for NAT Gateways to reach 'deleted' state (Up to 5 minutes)..."
     for i in {1..30}; do
-        STILL_DELETING=$(aws ec2 describe-nat-gateways --filter "Name=state,Values=deleting" --query "NatGateways[].NatGatewayId" --output text --region "$REGION")
-        if [ -z "$STILL_DELETING" ]; then break; fi
+        REMAINING=$(aws ec2 describe-nat-gateways --filter "Name=state,Values=available,deleting" --query "NatGateways[].NatGatewayId" --output text --region "$REGION")
+        if [ -z "$REMAINING" ]; then break; fi
         sleep 10
     done
 fi
 
-# 3. Release ALL Elastic IPs (Mapped public addresses block IGW detachment)
-echo "Releasing Elastic IPs..."
-ALLOC_IDS=$(aws ec2 describe-addresses --query "Addresses[].AllocationId" --output text --region "$REGION")
-for ALLOC in $ALLOC_IDS; do
-    echo "Releasing EIP: $ALLOC"
-    aws ec2 release-address --allocation-id $ALLOC --region "$REGION" || true
-done
-
-# 4. Clean up Load Balancers
+# 3. Clean Load Balancers and ASGs
 ALB_ARNS=$(aws elbv2 describe-load-balancers --query "LoadBalancers[?starts_with(LoadBalancerName, '$PROJECT_PREFIX-alb')].LoadBalancerArn" --output text --region "$REGION")
 for ALB in $ALB_ARNS; do
-    echo "Deleting ALB: $ALB"
     aws elbv2 delete-load-balancer --load-balancer-arn "$ALB" --region "$REGION" || true
 done
 
-# 5. Global VPC Cleanup (Delete ALL non-default VPCs)
+# 4. START RECURSIVE NETWORK SCRUB (5 PASSES)
+echo "🔄 Starting 5-pass recursive network scrub..."
 ALL_NON_DEFAULT_VPCS=$(aws ec2 describe-vpcs --query "Vpcs[?IsDefault==\`false\`].VpcId" --output text --region "$REGION")
+
 for VPC_ID in $ALL_NON_DEFAULT_VPCS; do
-    echo "💣 NUCLEAR CLEANUP: VPC $VPC_ID"
+    echo "💣 Cleaning VPC $VPC_ID..."
     
-    # 5a. Delete VPC Endpoints
-    VPC_ENDPOINT_IDS=$(aws ec2 describe-vpc-endpoints --filters "Name=vpc-id,Values=$VPC_ID" --query "VpcEndpoints[].VpcEndpointId" --output text --region "$REGION")
-    for VPCE in $VPC_ENDPOINT_IDS; do
-        echo "Deleting VPC Endpoint: $VPCE"
-        aws ec2 delete-vpc-endpoints --vpc-endpoint-ids "$VPCE" --region "$REGION" || true
+    for pass in {1..5}; do
+        echo "Pass $pass: Scrubbing dependencies for VPC $VPC_ID..."
+        
+        # 4a. Release Elastic IPs
+        EIP_ASSOCS=$(aws ec2 describe-addresses --filters "Name=domain,Values=vpc" --query "Addresses[?InstanceId!=null || AssociationId!=null].AssociationId" --output text --region "$REGION")
+        for ASSOC in $EIP_ASSOCS; do 
+            aws ec2 disassociate-address --association-id "$ASSOC" --region "$REGION" || true
+        done
+        ALLOC_IDS=$(aws ec2 describe-addresses --query "Addresses[].AllocationId" --output text --region "$REGION")
+        for ALLOC in $ALLOC_IDS; do
+            aws ec2 release-address --allocation-id "$ALLOC" --region "$REGION" || true
+        done
+
+        # 4b. Scrub Endpoints and Peering
+        aws ec2 describe-vpc-endpoints --filters "Name=vpc-id,Values=$VPC_ID" --query "VpcEndpoints[].VpcEndpointId" --output text --region "$REGION" | xargs -r aws ec2 delete-vpc-endpoints --vpc-endpoint-ids --region "$REGION" || true
+        aws ec2 describe-vpc-peering-connections --filters "Name=requester-vpc-info.vpc-id,Values=$VPC_ID" --query "VpcPeeringConnections[].VpcPeeringConnectionId" --output text --region "$REGION" | xargs -r aws ec2 delete-vpc-peering-connection --vpc-peering-connection-id --region "$REGION" || true
+
+        # 4c. Scrub ENIs (Network Interfaces)
+        aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$VPC_ID" --query "NetworkInterfaces[].NetworkInterfaceId" --output text --region "$REGION" | xargs -r aws ec2 delete-network-interface --network-interface-id --region "$REGION" || true
+
+        # 4d. Scrub Gateways
+        aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$VPC_ID" --query "InternetGateways[].InternetGatewayId" --output text --region "$REGION" | while read igw; do
+            aws ec2 detach-internet-gateway --internet-gateway-id "$igw" --vpc-id "$VPC_ID" --region "$REGION" || true
+            aws ec2 delete-internet-gateway --internet-gateway-id "$igw" --region "$REGION" || true
+        done
+
+        # 4e. Scrub Subnets
+        aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query "Subnets[].SubnetId" --output text --region "$REGION" | xargs -r aws ec2 delete-subnet --subnet-id --region "$REGION" || true
+
+        # Wait between passes
+        sleep 10
     done
 
-    # 5b. Delete VPC Peering Connections
-    PEERING_IDS=$(aws ec2 describe-vpc-peering-connections --filters "Name=requester-vpc-info.vpc-id,Values=$VPC_ID" --query "VpcPeeringConnections[].VpcPeeringConnectionId" --output text --region "$REGION")
-    for PEER in $PEERING_IDS; do
-        echo "Deleting VPC Peering: $PEER"
-        aws ec2 delete-vpc-peering-connection --vpc-peering-connection-id "$PEER" --region "$REGION" || true
-    done
-
-    # Detach and delete Gateways
-    IGW_IDS=$(aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$VPC_ID" --query "InternetGateways[].InternetGatewayId" --output text --region "$REGION")
-    for IGW in $IGW_IDS; do
-        aws ec2 detach-internet-gateway --internet-gateway-id "$IGW" --vpc-id "$VPC_ID" --region "$REGION" || true
-        aws ec2 delete-internet-gateway --internet-gateway-id "$IGW" --region "$REGION" || true
-    done
-
-    # Delete Subnets
-    SUBNET_IDS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query "Subnets[].SubnetId" --output text --region "$REGION")
-    for SID in $SUBNET_IDS; do
-        aws ec2 delete-subnet --subnet-id "$SID" --region "$REGION" || true
-    done
-
-    # Delete the VPC itself (Show error if it fails!)
+    # Final VPC deletion
     echo "Final VPC deletion attempt: $VPC_ID"
     aws ec2 delete-vpc --vpc-id "$VPC_ID" --region "$REGION"
 done
 
-# 6. Final Log Group Scrub
-echo "Cleaning Log Groups..."
-LOG_GROUPS=$(aws logs describe-log-groups --query "logGroups[?contains(logGroupName, 'nealstreet')].logGroupName" --output text --region $REGION)
-for LG in $LOG_GROUPS; do
-    aws logs delete-log-group --log-group-name "$LG" --region $REGION || true
-done
+# 5. Clean Log Groups (Wait for names to clear)
+aws logs describe-log-groups --query "logGroups[?contains(logGroupName, 'nealstreet')].logGroupName" --output text --region "$REGION" | xargs -r -n1 aws logs delete-log-group --log-group-name --region "$REGION" || true
 
-echo "✅ CLEANUP COMPLETE: Account limit should be clear."
+echo "✅ ULTIMATE PURGE COMPLETE: Your landing zone is clean."
