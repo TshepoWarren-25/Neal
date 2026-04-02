@@ -18,6 +18,15 @@ for REGION in "${REGIONS[@]}"; do
         aws ec2 delete-nat-gateway --nat-gateway-id "$NAT" --region "$REGION" || true
     done
 
+    if [ ! -z "$NAT_GW_IDS" ]; then
+        echo "⏳ Waiting for NAT Gateways to reach 'deleted' state (up to 5 mins)..."
+        for i in {1..30}; do
+            REMAINING=$(aws ec2 describe-nat-gateways --filter "Name=state,Values=deleting" --query "NatGateways[].NatGatewayId" --output text --region "$REGION")
+            if [ -z "$REMAINING" ]; then break; fi
+            sleep 10
+        done
+    fi
+
     # 2. Delete ALL Auto Scaling Groups
     echo "Finding ALL Auto Scaling Groups..."
     ASG_NAMES=$(aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[].AutoScalingGroupName" --output text --region "$REGION")
@@ -73,7 +82,21 @@ for REGION in "${REGIONS[@]}"; do
                 aws ec2 delete-network-interface --network-interface-id $ENI --region "$REGION" || true
             done
 
-            # 6b. Detach and delete Gateways
+            # 6b. Delete VPC Endpoints
+            VPC_ENDPOINT_IDS=$(aws ec2 describe-vpc-endpoints --filters "Name=vpc-id,Values=$VPC_ID" --query "VpcEndpoints[].VpcEndpointId" --output text --region "$REGION")
+            for VPCE in $VPC_ENDPOINT_IDS; do
+                echo "Deleting VPC Endpoint: $VPCE"
+                aws ec2 delete-vpc-endpoints --vpc-endpoint-ids "$VPCE" --region "$REGION" || true
+            done
+
+            # 6c. Delete VPC Peering Connections
+            PEERING_IDS=$(aws ec2 describe-vpc-peering-connections --filters "Name=requester-vpc-info.vpc-id,Values=$VPC_ID" --query "VpcPeeringConnections[].VpcPeeringConnectionId" --output text --region "$REGION")
+            for PEER in $PEERING_IDS; do
+                echo "Deleting VPC Peering: $PEER"
+                aws ec2 delete-vpc-peering-connection --vpc-peering-connection-id "$PEER" --region "$REGION" || true
+            done
+
+            # 6d. Detach and delete Gateways
             IGW_IDS=$(aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$VPC_ID" --query "InternetGateways[].InternetGatewayId" --output text --region "$REGION")
             for IGW in $IGW_IDS; do
                 aws ec2 detach-internet-gateway --internet-gateway-id "$IGW" --vpc-id "$VPC_ID" --region "$REGION" || true
