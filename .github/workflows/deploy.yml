@@ -22,6 +22,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ansible
 
+      - name: Configure AWS Credentials
+        run: |
+          aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws configure set aws_secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws configure set region us-east-1
+          aws configure set output json
+
       - name: Bootstrap - Ensure S3 State Bucket Exists
         run: |
           BUCKET_NAME="nealstreet-tf-state-$(aws sts get-caller-identity --query Account --output text)"
@@ -32,35 +39,20 @@ jobs:
           else
             echo "State Bucket Already Exists: $BUCKET_NAME"
           fi
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: us-east-1
 
       - name: NUKE - Cleanup Existing Account
         run: |
           chmod +x terraform/nuke_nealstreet.sh
           ./terraform/nuke_nealstreet.sh
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: us-east-1
 
       - name: Terraform Init
         run: terraform init
         working-directory: ./terraform
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: us-east-1
 
       - name: Terraform Apply
         run: terraform apply -auto-approve
         working-directory: ./terraform
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: us-east-1
           TF_VAR_secret_value: ${{ secrets.APP_SECRET }}
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
@@ -70,7 +62,3 @@ jobs:
           echo "Site URL: http://$(terraform output -raw alb_dns_name)"
           echo "CloudWatch Logs: https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#logsV2:log-groups"
         working-directory: ./terraform
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: us-east-1
