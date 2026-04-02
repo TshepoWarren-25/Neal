@@ -24,14 +24,6 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: 🔥🔥🔥 NUKE - Cleanup Previous Landing Zone
-        # This script forcibly deletes all nealstreet resources to ensure a clean slate.
-        run: chmod +x terraform/nuke_nealstreet.sh && bash terraform/nuke_nealstreet.sh
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: "us-east-1"
-
       - name: Diagnostic - GitHub Runner Context
         run: |
           echo "Branch: ${GITHUB_REF}"
