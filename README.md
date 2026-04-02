@@ -1,47 +1,42 @@
-# AWS IaC + Linux Configuration for Dev Web Tier
+# 🚀 NealStreet: Automated Web-Tier Rewards Engine
 
-This project implements a secure, automated web tier for a rewards platform, optimized for AWS Free Tier and production-readiness.
+Professional-grade infrastructure-as-code (IaC) and configuration management (CM) for a highly available, self-healing AWS web application. This project implements a **"Zero-Friction / Total Reset"** deployment strategy, ensuring every run starts from a clean, predictable state.
 
-## Prerequisites
-- AWS CLI configured with appropriate credentials.
-- Terraform >= 1.0.0
-- Ansible >= 2.10
-- SSH Private Key for EC2 access.
+## 🏗️ Core Architecture Overview
+This project provisions a full AWS stack in `us-east-1` (North Virginia) within the **Free Tier** limits.
 
-## Project Structure
-- `/terraform`: Infrastructure as Code for VPC, ALB, ASG, and IAM.
-- `/ansible`: OS and Application configuration management.
-- `/app`: Minimal health check service in Python.
-- `/.github/workflows`: CI/CD pipeline.
+*   **Networking**: Custom VPC with Multi-AZ Public Subnets, Internet Gateway, and optimized Route Tables.
+*   **Compute**: Auto Scaling Group (ASG) maintaining a desired fleet of Amazon Linux 2023 instances.
+*   **Load Balancing**: Application Load Balancer (ALB) with Layer 7 health checks on `/health`.
+*   **Configuration**: Automated **Ansible** playbook for OS hardening, Python service deployment, and real-time secret discovery.
+*   **Monitoring**: Centralized logging via **AWS CloudWatch** (Unified Agent) and **AWS SSM** for secure sessions.
 
-## Running Locally
+## ⚡ Key Features
+*   **"Total Scorch" Reset**: Integrated cleanup script (`nuke_nealstreet.sh`) that clears every previous resource (ASGs, Instances, LBs, EIPs) before a new build begins.
+*   **State-Synchronized CI/CD**: Seamless GitHub Actions pipeline that clears the Terraform state before deployment to resolve dependency deadlocks.
+*   **Secure Secret Management**: Application secrets are never stored in plain text; they are fetched at runtime by Ansible directly from **AWS SSM Parameter Store**.
+*   **Hardened Infrastructure**: Strictly enforces **IMDSv2**, IAM Least Privilege, and security group encapsulation (ALB as the only perimeter entry).
 
-### 1. Provision Infrastructure
-```bash
-cd terraform
-terraform init
-terraform plan
-terraform apply
-```
+## 🚀 Deployment Workflow
+The entire deployment is fully automated through GitHub Actions.
 
-### 2. Configure Instances
-Note: Ansible requires the instances to be running and reachable.
-```bash
-cd ansible
-# Update inventory.ini with EC2 public IP
-ansible-playbook -i inventory.ini playbook.yml --user ec2-user --private-key /path/to/your/key.pem
-```
+1.  **Push to `main`**: Triggers the CI/CD pipeline.
+2.  **Authentication**: Uses GitHub Environment Secrets (**Dev**) and encrypted SSH keys.
+3.  **The Nuke**: Purges the us-east-1 region of any "Ghost" resources from previous runs.
+4.  **Provisioning**: Terraform builds the VPC and Compute layers.
+5.  **The Bridge**: Terraform automatically triggers Ansible via a `local-exec` provisioner.
+6.  **Configuration**: Ansible deploys the Python app, configures `systemd`, and activates CloudWatch logging.
 
-### 3. Cleanup
-To avoid costs (though most resources are free-tier eligible):
-```bash
-cd terraform
-terraform destroy
-```
+## 🛠️ Verification
+Once the pipeline is green, the site is live at the **Site URL** printed in the GitHub log output. 
+- **Endpoint**: `http://[ALB_DNS_NAME]/health`
+- **Expected Response**: `{"service": "rewards", "status": "ok", ...}`
 
-## Environment Secret Demo
-The value for `APP_SECRET` should be set in AWS SSM Parameter Store:
-```bash
-aws ssm put-parameter --name "/rewards/dev/APP_SECRET" --value "SuperSecretValue" --type "SecureString" --overwrite
-```
-The application will automatically fetch this during the Ansible run.
+## 📁 Repository Structure
+*   `terraform/`: HCL code for AWS infrastructure and the Nuke utility script.
+*   `ansible/`: Configuration management playbooks and systemd templates.
+*   `app/`: Minimal dependency-free Python health service.
+*   `.github/workflows/`: CI/CD automation logic.
+
+---
+*Developed for the NealStreet Rewards Platform.*

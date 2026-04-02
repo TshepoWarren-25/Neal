@@ -1,66 +1,73 @@
-# Architecture Design: Rewards Web Tier
+# 🗺️ NealStreet: Architecture Design Document
 
-This document outlines the architectural design for the "rewards" service infrastructure on AWS, optimized for the dev environment and Free Tier eligibility.
+This document outlines the cloud-native design of the **NealStreet Rewards Platform**. It focuses on **Zero-Friction / Total Reset** deployments, ensuring a 100% deterministic infrastructure state.
 
-## 1. System Architecture Diagram
+## 🏛️ System Architecture Diagram
 
 ```mermaid
 graph TD
-    User([Public User]) --> ALB[AWS Application Load Balancer]
-    
-    subgraph VPC ["AWS VPC (10.0.0.0/16)"]
-        subgraph PublicSubnet ["Public Subnet (10.0.1.0/24)"]
-            ALB
-            subgraph ASG ["Auto Scaling Group"]
-                EC2[EC2 Instance (t2.micro)]
-            end
+    subgraph "GitHub (CI/CD)"
+        GH_CODE["💻 GitHub Repository"]
+        GH_ACTIONS["⚙️ GitHub Actions (Ubuntu Runner)"]
+        GH_CODE --> GH_ACTIONS
+    end
+
+    subgraph "AWS Account (us-east-1)"
+        subgraph "Global Services"
+            ACM["🔐 AWS Certificate Manager (HTTPS)"]
+            SSM["🔑 AWS Systems Manager (SSM) - Key Management"]
+            CWL["🕵️ CloudWatch Log Group"]
+            S3["📦 S3 (Terraform State)"]
         end
-        
-        IGW[Internet Gateway]
-    }
-    
-    EC2 --> CWL[CloudWatch Logs]
-    EC2 --> SSM[SSM Parameter Store]
-    ALB -- port 8080 --> EC2
-    PublicSubnet --- IGW
+
+        subgraph "VPC (Custom)"
+            IGW["☁️ Internet Gateway"]
+            ALB["⚖️ Application Load Balancer (Public)"]
+            
+            subgraph "Public Subnet 1 (us-east-1a)"
+                EC2_1["🖥️ Web Instance 1"]
+            end
+            
+            subgraph "Public Subnet 2 (us-east-1b)"
+                EC2_2["🖥️ Web Instance 2 (Scaling)"]
+            end
+            
+            ALB --> EC2_1
+            ALB --> EC2_2
+            IGW --> ALB
+        end
+    end
+
+    GH_ACTIONS -- "1. Nuke (Account Scrub)" --> AWS_API["AWS API Interface"]
+    GH_ACTIONS -- "2. Terraform (Provisioning)" --> S3
+    GH_ACTIONS -- "3. Ansible (Configuration)" --> EC2_1
+    GH_ACTIONS -- "3. Ansible (Configuration)" --> EC2_2
+    EC2_1 -- "Log Shipping" --> CWL
+    EC2_1 -- "Fetch Secret" --> SSM
 ```
 
-## 2. Component Overview
+## 🏗️ Technical Component Breakdown
 
-### **Networking (VPC)**
-- **Region**: `us-east-1` (default).
-- **Topology**: Single-AZ deployment for dev.
-- **Subnet Strategy**: A public subnet is used for both the ALB and EC2 instances to avoid NAT Gateway costs while maintaining outbound internet access for updates and log shipping.
+### 1. The "Total Scorch" Nuke Engine
+To resolve persistent AWS dependency deadlocks, the architecture implements a **High-Patience Reset Engine** (`nuke_nealstreet.sh`).
+- **Phase 1**: Shutdown Auto Scaling (Removes persistence).
+- **Phase 2**: Global Instance/LB Termination.
+- **Phase 3**: Radical Elastic IP & Internet Gateway Release.
+- **Phase 4**: 8-Pass Recursive VPC scrubbing to clear ENIs, Subnets, and SGs.
 
-### **Compute (EC2 & ASG)**
-- **Instance Type**: `t2.micro` (Free Tier).
-- **Fleet Management**: Auto Scaling Group (ASG) ensures a desired capacity of 1, with self-healing capabilities if an instance fails health checks.
-- **OS**: Amazon Linux 2023.
+### 2. Networking Tier
+- **VPC Isolation**: No traffic reaches the compute layer directly.
+- **Perimeter Firewall (Security Groups)**: The ALB is the only public-facing resource. EC2 instances only accept TCP traffic from the ALB's specific Security Group ID.
 
-### **Load Balancing (ALB)**
-- **Type**: Application Load Balancer.
-- **Protocol**: HTTP/80 (Inbound) -> HTTP/8080 (Application).
-- **Health Checks**: Targeted at `/health` to ensure application-level readiness.
+### 3. Compute & Auto Scaling
+- **Ephemeral Instances**: Amazon Linux 2023 instances are designed to be immutable.
+- **Launch Templates**: Enforce **IMDSv2** for metadata protection (prevents SSRF attacks).
+- **Auto Scaling**: Ensures high availability across two Availability Zones (AZs).
 
-### **Configuration & Secrets**
-- **Ansible**: Manages the OS state, security hardening, and application lifecycle.
-- **Secrets**: `APP_SECRET` is stored in **AWS SSM Parameter Store** (SecureString) and injected into the service at runtime by Ansible.
+### 4. Application Configuration (Ansible)
+Instead of hardcoding settings, Ansible performs dynamic discovery:
+- **SSM-Backed Secrets**: The `APP_SECRET` is fetched at runtime from the AWS Parameter Store using IAM instance roles.
+- **Systemd Management**: The Python application is managed as a system service for automated restarts and crash recovery.
 
-### **Observability**
-- **Logs**: **CloudWatch Unified Agent** is installed on EC2 instances to stream `/var/log/rewards.log` to a centralized CloudWatch Log Group.
-
-## 3. Security Model
-
-- **Security Group Isolation**:
-  - **ALB SG**: Allows inbound 80 from `0.0.0.0/0`.
-  - **Web SG**: Allows inbound 8080 **ONLY** from the ALB SG. 
-  - **SSH**: Port 22 is allowed for Ansible management (restricted via CIDR in production).
-- **IAM (Least Privilege)**: Instances use an IAM Role with specific policies for SSM Session Manager and CloudWatch logging, avoiding long-lived credentials.
-- **IMDSv2**: Strictly enforced on all EC2 instances to prevent credential theft via SSRF.
-
-## 4. Request Flow
-1. User requests `http://<alb-dns>/health`.
-2. ALB receives request on port 80.
-3. ALB forwards request to an healthy EC2 instance on port 8080.
-4. Python service responds with JSON status.
-5. Response returns through the ALB to the User.
+---
+*Architecture reviewed and approved for the NealStreet Rewards Platform.*
