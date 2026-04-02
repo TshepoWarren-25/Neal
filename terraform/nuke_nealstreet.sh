@@ -67,9 +67,15 @@ for VPC_ID in $ALL_NON_DEFAULT_VPCS; do
         aws ec2 describe-vpc-peering-connections --filters "Name=requester-vpc-info.vpc-id,Values=$VPC_ID" --query "VpcPeeringConnections[].VpcPeeringConnectionId" --output text --region "$REGION" | xargs -r aws ec2 delete-vpc-peering-connection --vpc-peering-connection-id --region "$REGION" || true
 
         # 4c. Scrub ENIs (Network Interfaces)
-        aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$VPC_ID" --query "NetworkInterfaces[].NetworkInterfaceId" --output text --region "$REGION" | xargs -r aws ec2 delete-network-interface --network-interface-id --region "$REGION" || true
-
-        # 4d. Scrub Gateways
+        ENI_IDS=$(aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$VPC_ID" --query "NetworkInterfaces[].NetworkInterfaceId" --output text --region "$REGION")
+        for ENI in $ENI_IDS; do
+            echo "Scrubbing ENI: $ENI"
+            ATTACH_ID=$(aws ec2 describe-network-interfaces --network-interface-ids "$ENI" --query "NetworkInterfaces[0].Attachment.AttachmentId" --output text --region "$REGION")
+            if [ ! -z "$ATTACH_ID" ] && [ "$ATTACH_ID" != "None" ]; then
+                aws ec2 detach-network-interface --attachment-id "$ATTACH_ID" --force --region "$REGION" || true
+            fi
+            aws ec2 delete-network-interface --network-interface-id "$ENI" --region "$REGION" || true
+        done
         aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$VPC_ID" --query "InternetGateways[].InternetGatewayId" --output text --region "$REGION" | while read igw; do
             aws ec2 detach-internet-gateway --internet-gateway-id "$igw" --vpc-id "$VPC_ID" --region "$REGION" || true
             aws ec2 delete-internet-gateway --internet-gateway-id "$igw" --region "$REGION" || true
