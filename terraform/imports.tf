@@ -1,3 +1,2 @@
-# --- Dynamic Adoption Map ---
-# This file is populated at runtime by the GitHub Action discovery step.
-# It allows Terraform to claim the existing orphaned infrastructure by ID.
+# This file is no longer used. 
+# We have returned to a clean 'Nuke & Rebuild' strategy.

@@ -17,7 +17,7 @@ resource "aws_vpc" "main" {
     cost_center = "payments"
   }
 
-  lifecycle { ignore_changes = all }
+
 }
 
 resource "aws_internet_gateway" "main" {
@@ -39,7 +39,7 @@ resource "aws_subnet" "public_1" {
     environment = var.environment
   }
 
-  lifecycle { ignore_changes = all }
+
 }
 
 resource "aws_subnet" "public_2" {
@@ -53,7 +53,7 @@ resource "aws_subnet" "public_2" {
     environment = var.environment
   }
 
-  lifecycle { ignore_changes = all }
+
 }
 
 resource "aws_route_table" "public" {
@@ -100,7 +100,7 @@ resource "aws_security_group" "alb" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  lifecycle { ignore_changes = all }
+
 }
 
 # Web Server Security Group: Application tier security.
@@ -135,7 +135,7 @@ resource "aws_security_group" "web" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  lifecycle { ignore_changes = all }
+
 }
 
 # --- ALB ---
@@ -150,7 +150,7 @@ resource "aws_lb" "main" {
     Name = "nealstreet-${var.environment}-alb-01"
   }
 
-  lifecycle { ignore_changes = all }
+
 }
 
 resource "aws_lb_target_group" "web" {
@@ -167,7 +167,7 @@ resource "aws_lb_target_group" "web" {
     unhealthy_threshold = 2
   }
 
-  lifecycle { ignore_changes = all }
+
 }
 
 resource "aws_lb_listener" "http" {
@@ -180,7 +180,7 @@ resource "aws_lb_listener" "http" {
     target_group_arn = aws_lb_target_group.web.arn
   }
 
-  lifecycle { ignore_changes = all }
+
 }
 
 # --- Compute Layer (ASG) ---
@@ -201,7 +201,7 @@ resource "aws_iam_role" "web_role" {
     ]
   })
 
-  lifecycle { ignore_changes = all }
+
 }
 
 # Managed policies for SSM Session Manager and CloudWatch Agent.
@@ -209,14 +209,14 @@ resource "aws_iam_role_policy_attachment" "ssm" {
   role       = aws_iam_role.web_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 
-  lifecycle { ignore_changes = all }
+
 }
 
 resource "aws_iam_role_policy_attachment" "logs" {
   role       = aws_iam_role.web_role.name
   policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
 
-  lifecycle { ignore_changes = all }
+
 }
 
 # --- Access Management ---
@@ -313,7 +313,7 @@ resource "aws_cloudwatch_log_group" "app_logs" {
   name              = "/aws/ec2/nealstreet-${var.environment}-web-01"
   retention_in_days = 7
 
-  lifecycle { ignore_changes = all }
+
 }
 
 # --- Secrets (Demo) ---

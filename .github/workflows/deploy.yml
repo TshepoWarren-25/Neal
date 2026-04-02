@@ -1,126 +1,83 @@
-name: AWS IaC & Linux Config Deployment
+name: 🚀 NealStreet - Fresh Build Reset
 
 on:
-  pull_request:
-    branches: [ "*" ]
   push:
-    branches: [ "*" ]
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  TF_LOG: INFO
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
-  terraform:
-    name: Terraform Plan & Apply
+  deploy:
+    name: 🏗️ Fresh Rebuild & Provision
     runs-on: ubuntu-latest
-    environment: Dev
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_REGION: "us-east-1"
-
+    
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Diagnostic - GitHub Runner Context
-        run: |
-          echo "Branch: ${GITHUB_REF}"
-          echo "Event: ${GITHUB_EVENT_NAME}"
-          ls -R
-
-      - name: Setup Terraform
+      - name: 🛠️ Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      - name: Install Ansible
+      - name: 🛠️ Setup Ansible
         run: |
           sudo apt-get update
           sudo apt-get install -y ansible
 
-      - name: Create SSH Key for Ansible
-        run: |
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ansible/key.pem
-          chmod 600 ansible/key.pem
+      - name: 🛠️ Setup AWS CLI
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
 
       - name: 🛠️ Bootstrap - Ensure S3 State Bucket Exists
         run: |
-          aws s3api head-bucket --bucket "nealstreet-tf-state-414061810385" 2>/dev/null || \
-          aws s3 mb s3://nealstreet-tf-state-414061810385 --region us-east-1
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: "us-east-1"
-
-      - name: 🕵️ Auto-Discovery - Snap State to Existing Cloud
-        run: |
-          # 1. Discover ALB & Target Group
-          ALB_ARN=$(aws elbv2 describe-load-balancers --names nealST-dev-alb-01 --query "LoadBalancers[0].LoadBalancerArn" --output text --region us-east-1 2>/dev/null) || ALB_ARN=""
-          TG_ARN=$(aws elbv2 describe-target-groups --names nealST-dev-tg-01 --query "TargetGroups[0].TargetGroupArn" --output text --region us-east-1 2>/dev/null) || TG_ARN=""
-          
-          if [ ! -z "$ALB_ARN" ] && [ "$ALB_ARN" != "None" ]; then
-            # 2. Extract detailed IDs from existing ALB
-            VPC_ID=$(aws elbv2 describe-load-balancers --load-balancer-arns "$ALB_ARN" --query "LoadBalancers[0].VpcId" --output text --region us-east-1)
-            SG_ALB=$(aws elbv2 describe-load-balancers --load-balancer-arns "$ALB_ARN" --query "LoadBalancers[0].SecurityGroups[0]" --output text --region us-east-1)
-            SUBNET1=$(aws elbv2 describe-load-balancers --load-balancer-arns "$ALB_ARN" --query "LoadBalancers[0].AvailabilityZones[0].SubnetId" --output text --region us-east-1)
-            SUBNET2=$(aws elbv2 describe-load-balancers --load-balancer-arns "$ALB_ARN" --query "LoadBalancers[0].AvailabilityZones[1].SubnetId" --output text --region us-east-1)
-            
-            # 3. Adopt the foundational network
-            printf "\nimport {\n  to = aws_vpc.main\n  id = \"$VPC_ID\"\n}\n" >> terraform/imports.tf
-            printf "\nimport {\n  to = aws_security_group.alb\n  id = \"$SG_ALB\"\n}\n" >> terraform/imports.tf
-            printf "\nimport {\n  to = aws_subnet.public_1\n  id = \"$SUBNET1\"\n}\n" >> terraform/imports.tf
-            printf "\nimport {\n  to = aws_subnet.public_2\n  id = \"$SUBNET2\"\n}\n" >> terraform/imports.tf
-            printf "\nimport {\n  to = aws_lb.main\n  id = \"$ALB_ARN\"\n}\n" >> terraform/imports.tf
-            
-            # 4. Adopt the target group if it exists
-            if [ ! -z "$TG_ARN" ] && [ "$TG_ARN" != "None" ]; then
-              printf "\nimport {\n  to = aws_lb_target_group.web\n  id = \"$TG_ARN\"\n}\n" >> terraform/imports.tf
-            fi
-
-            # 5. Adopt the Listener
-            LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn "$ALB_ARN" --query "Listeners[0].ListenerArn" --output text --region us-east-1 2>/dev/null) || LISTENER_ARN=""
-            if [ ! -z "$LISTENER_ARN" ] && [ "$LISTENER_ARN" != "None" ]; then
-                printf "\nimport {\n  to = aws_lb_listener.http\n  id = \"$LISTENER_ARN\"\n}\n" >> terraform/imports.tf
-            fi
-            
-            # 6. Harvest Log Group (Ensure single ID)
-            LOG_GRP=$(aws logs describe-log-groups --log-group-name-prefix "/aws/ec2/nealstreet" --query "logGroups[0].logGroupName" --output text --region us-east-1 2>/dev/null | awk '{print $1}') || LOG_GRP=""
-            if [ ! -z "$LOG_GRP" ] && [ "$LOG_GRP" != "None" ]; then
-                printf "\nimport {\n  to = aws_cloudwatch_log_group.app_logs\n  id = \"$LOG_GRP\"\n}\n" >> terraform/imports.tf
-            fi
-
-            # 7. Harvest IAM Role (Ensure single ID)
-            ROLE_NAME=$(aws iam list-roles --query "Roles[?starts_with(RoleName, 'nealST-dev-web-role-01')].RoleName" --output text 2>/dev/null | awk '{print $1}') || ROLE_NAME=""
-            if [ ! -z "$ROLE_NAME" ] && [ "$ROLE_NAME" != "None" ]; then
-                printf "\nimport {\n  to = aws_iam_role.web_role\n  id = \"$ROLE_NAME\"\n}\n" >> terraform/imports.tf
-            fi
-
-            # 8. Harvest Key Pair
-            KEY_NAME=$(aws ec2 describe-key-pairs --filters "Name=key-name,Values=nealST-dev-key-01" --query "KeyPairs[0].KeyName" --output text --region us-east-1 2>/dev/null) || KEY_NAME=""
-            if [ ! -z "$KEY_NAME" ] && [ "$KEY_NAME" != "None" ]; then
-                printf "\nimport {\n  to = aws_key_pair.deployer\n  id = \"$KEY_NAME\"\n}\n" >> terraform/imports.tf
-            fi
-
-            echo "✅ Dynamic Adoption Map Generated for existing Cloud resources."
+          BUCKET_NAME="nealstreet-tf-state-$(aws sts get-caller-identity --query Account --output text)"
+          if ! aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+            echo "🆕 Creating State Bucket: $BUCKET_NAME"
+            aws s3api create-bucket --bucket "$BUCKET_NAME" --region us-east-1
+            aws s3api put-bucket-versioning --bucket "$BUCKET_NAME" --versioning-configuration Status=Enabled
           else
-            echo "ℹ️ No existing Load Balancer found. Terraform will create a new stack."
+            echo "✅ State Bucket Already Exists: $BUCKET_NAME"
           fi
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: "us-east-1"
+          AWS_REGION: us-east-1
+
+      - name: 🔥🔥🔥 NUKE - Cleanup Existing Account
+        run: |
+          chmod +x terraform/nuke_nealstreet.sh
+          ./terraform/nuke_nealstreet.sh
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: us-east-1
 
       - name: Terraform Init
         run: terraform init
-        working-directory: terraform
-
-      - name: Terraform Plan
-        run: terraform plan -var="ssh_private_key_path=../ansible/key.pem" -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}"
-        working-directory: terraform
-
-      - name: Terraform Apply (FORCED)
-        # Forced to run on all pushes to ensure the user gets their resources created immediately.
-        run: terraform apply -auto-approve -var="ssh_private_key_path=../ansible/key.pem" -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}"
-        working-directory: terraform
+        working-directory: ./terraform
         env:
-          ANSIBLE_HOST_KEY_CHECKING: "False"
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: us-east-1
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve
+        working-directory: ./terraform
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: us-east-1
+          TF_VAR_secret_value: ${{ secrets.APP_SECRET }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
+
+      - name: 🏁 Final Outputs
+        run: |
+          echo "🚀 Site URL: http://$(terraform output -raw alb_dns_name)"
+          echo "🔍 CloudWatch Logs: https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#logsV2:log-groups"
+        working-directory: ./terraform
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: us-east-1
