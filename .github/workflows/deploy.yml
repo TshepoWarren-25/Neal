@@ -1,4 +1,4 @@
-name: 🚀 NealStreet - Fresh Build Reset
+name: NealStreet - Fresh Build Reset
 
 on:
   push:
@@ -7,44 +7,37 @@ on:
 
 jobs:
   deploy:
-    name: 🏗️ Fresh Rebuild & Provision
+    name: Fresh Rebuild and Provision
     runs-on: ubuntu-latest
     
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: 🛠️ Setup Terraform
+      - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      - name: 🛠️ Setup Ansible
+      - name: Setup Ansible
         run: |
           sudo apt-get update
           sudo apt-get install -y ansible
 
-      - name: 🛠️ Setup AWS CLI
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-
-      - name: 🛠️ Bootstrap - Ensure S3 State Bucket Exists
+      - name: Bootstrap - Ensure S3 State Bucket Exists
         run: |
           BUCKET_NAME="nealstreet-tf-state-$(aws sts get-caller-identity --query Account --output text)"
           if ! aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
-            echo "🆕 Creating State Bucket: $BUCKET_NAME"
+            echo "Creating State Bucket: $BUCKET_NAME"
             aws s3api create-bucket --bucket "$BUCKET_NAME" --region us-east-1
             aws s3api put-bucket-versioning --bucket "$BUCKET_NAME" --versioning-configuration Status=Enabled
           else
-            echo "✅ State Bucket Already Exists: $BUCKET_NAME"
+            echo "State Bucket Already Exists: $BUCKET_NAME"
           fi
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: us-east-1
 
-      - name: 🔥🔥🔥 NUKE - Cleanup Existing Account
+      - name: NUKE - Cleanup Existing Account
         run: |
           chmod +x terraform/nuke_nealstreet.sh
           ./terraform/nuke_nealstreet.sh
@@ -72,10 +65,10 @@ jobs:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
 
-      - name: 🏁 Final Outputs
+      - name: Final Outputs
         run: |
-          echo "🚀 Site URL: http://$(terraform output -raw alb_dns_name)"
-          echo "🔍 CloudWatch Logs: https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#logsV2:log-groups"
+          echo "Site URL: http://$(terraform output -raw alb_dns_name)"
+          echo "CloudWatch Logs: https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#logsV2:log-groups"
         working-directory: ./terraform
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}

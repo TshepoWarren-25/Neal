@@ -3,7 +3,6 @@ provider "aws" {
 }
 
 # --- VPC Configuration ---
-# Provisioning a single-AZ VPC to stick to Free Tier limits.
 resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
@@ -184,7 +183,6 @@ resource "aws_lb_listener" "http" {
 }
 
 # --- Compute Layer (ASG) ---
-# IAM Role for EC2: Granting permissions for SSM and CloudWatch.
 resource "aws_iam_role" "web_role" {
   name_prefix = "nealST-${var.environment}-web-role-01-"
 
@@ -220,8 +218,6 @@ resource "aws_iam_role_policy_attachment" "logs" {
 }
 
 # --- Access Management ---
-# Automatically generate a temporary SSH key if the user hasn't provided one yet.
-# This ensures that Ansible can always launch and configure the project.
 resource "tls_private_key" "auto" {
   algorithm = "RSA"
   rsa_bits  = 4096
@@ -337,7 +333,6 @@ resource "time_sleep" "wait_for_instance" {
 }
 
 # --- Ansible Deployment Integration ---
-# Dynamically fetch the public IP of the instance created by the ASG.
 data "aws_instances" "web" {
   instance_tags = {
     Name = "nealstreet-${var.environment}-web-01"
