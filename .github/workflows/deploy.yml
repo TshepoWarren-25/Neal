@@ -66,39 +66,91 @@ jobs:
             SUBNET2=$(aws elbv2 describe-load-balancers --load-balancer-arns "$ALB_ARN" --query "LoadBalancers[0].AvailabilityZones[1].SubnetId" --output text --region us-east-1)
             
             # 3. Adopt the foundational network
-            echo -e "\nimport { to = aws_vpc.main; id = \"$VPC_ID\" }" >> terraform/imports.tf
-            echo -e "import { to = aws_security_group.alb; id = \"$SG_ALB\" }" >> terraform/imports.tf
-            echo -e "import { to = aws_subnet.public_1; id = \"$SUBNET1\" }" >> terraform/imports.tf
-            echo -e "import { to = aws_subnet.public_2; id = \"$SUBNET2\" }" >> terraform/imports.tf
-            echo -e "import { to = aws_lb.main; id = \"$ALB_ARN\" }" >> terraform/imports.tf
+            cat <<EOF >> terraform/imports.tf
+
+import {
+  to = aws_vpc.main
+  id = "$VPC_ID"
+}
+
+import {
+  to = aws_security_group.alb
+  id = "$SG_ALB"
+}
+
+import {
+  to = aws_subnet.public_1
+  id = "$SUBNET1"
+}
+
+import {
+  to = aws_subnet.public_2
+  id = "$SUBNET2"
+}
+
+import {
+  to = aws_lb.main
+  id = "$ALB_ARN"
+}
+EOF
             
             # 4. Adopt the target group if it exists
             if [ ! -z "$TG_ARN" ] && [ "$TG_ARN" != "None" ]; then
-              echo -e "import { to = aws_lb_target_group.web; id = \"$TG_ARN\" }" >> terraform/imports.tf
+              cat <<EOF >> terraform/imports.tf
+
+import {
+  to = aws_lb_target_group.web
+  id = "$TG_ARN"
+}
+EOF
             fi
 
             # 5. Adopt the Listener
             LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn "$ALB_ARN" --query "Listeners[0].ListenerArn" --output text --region us-east-1 2>/dev/null) || LISTENER_ARN=""
             if [ ! -z "$LISTENER_ARN" ] && [ "$LISTENER_ARN" != "None" ]; then
-              echo -e "import { to = aws_lb_listener.http; id = \"$LISTENER_ARN\" }" >> terraform/imports.tf
+              cat <<EOF >> terraform/imports.tf
+
+import {
+  to = aws_lb_listener.http
+  id = "$LISTENER_ARN"
+}
+EOF
             fi
             
-            # 6. Harvest Log Group 
-            LOG_GRP=$(aws logs describe-log-groups --log-group-name-prefix "/aws/ec2/nealstreet" --query "logGroups[0].logGroupName" --output text --region us-east-1 2>/dev/null) || LOG_GRP=""
+            # 6. Harvest Log Group (Ensure single ID)
+            LOG_GRP=$(aws logs describe-log-groups --log-group-name-prefix "/aws/ec2/nealstreet" --query "logGroups[0].logGroupName" --output text --region us-east-1 2>/dev/null | awk '{print $1}') || LOG_GRP=""
             if [ ! -z "$LOG_GRP" ] && [ "$LOG_GRP" != "None" ]; then
-              echo -e "import { to = aws_cloudwatch_log_group.app_logs; id = \"$LOG_GRP\" }" >> terraform/imports.tf
+              cat <<EOF >> terraform/imports.tf
+
+import {
+  to = aws_cloudwatch_log_group.app_logs
+  id = "$LOG_GRP"
+}
+EOF
             fi
 
-            # 6. Harvest IAM Role
-            ROLE_NAME=$(aws iam list-roles --query "Roles[?starts_with(RoleName, 'nealST-dev-web-role-01')].RoleName" --output text 2>/dev/null) || ROLE_NAME=""
+            # 7. Harvest IAM Role (Ensure single ID)
+            ROLE_NAME=$(aws iam list-roles --query "Roles[?starts_with(RoleName, 'nealST-dev-web-role-01')].RoleName" --output text 2>/dev/null | awk '{print $1}') || ROLE_NAME=""
             if [ ! -z "$ROLE_NAME" ] && [ "$ROLE_NAME" != "None" ]; then
-              echo -e "import { to = aws_iam_role.web_role; id = \"$ROLE_NAME\" }" >> terraform/imports.tf
+              cat <<EOF >> terraform/imports.tf
+
+import {
+  to = aws_iam_role.web_role
+  id = "$ROLE_NAME"
+}
+EOF
             fi
 
-            # 7. Harvest Key Pair
+            # 8. Harvest Key Pair
             KEY_NAME=$(aws ec2 describe-key-pairs --filters "Name=key-name,Values=nealST-dev-key-01" --query "KeyPairs[0].KeyName" --output text --region us-east-1 2>/dev/null) || KEY_NAME=""
             if [ ! -z "$KEY_NAME" ] && [ "$KEY_NAME" != "None" ]; then
-              echo -e "import { to = aws_key_pair.deployer; id = \"$KEY_NAME\" }" >> terraform/imports.tf
+              cat <<EOF >> terraform/imports.tf
+
+import {
+  to = aws_key_pair.deployer
+  id = "$KEY_NAME"
+}
+EOF
             fi
 
             echo "✅ Dynamic Adoption Map Generated for existing Cloud resources."
