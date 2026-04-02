@@ -376,7 +376,9 @@ resource "null_resource" "ansible_provisioner" {
   provisioner "local-exec" {
     # Inline subshell to ensure we have the absolute latest Public IP.
     # We pass CloudWatch and SSM identities as external variables to the playbook.
+    # ANSIBLE_HOST_KEY_CHECKING=False is required for automated CI/CD connections.
     command = <<EOT
+      export ANSIBLE_HOST_KEY_CHECKING=False
       PUBLIC_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=nealstreet-${var.environment}-web-01" "Name=instance-state-name,Values=running" --query "Reservations[].Instances[0].PublicIpAddress" --output text --region ${var.aws_region})
       echo "[webservers]\n$PUBLIC_IP ansible_user=ec2-user ansible_ssh_private_key_file=${var.ssh_private_key_path}" > ${path.module}/../ansible/inventory.ini
       ansible-playbook -i ${path.module}/../ansible/inventory.ini -e 'log_group_name=${aws_cloudwatch_log_group.app_logs.name} ssm_parameter_name=${aws_ssm_parameter.app_secret.name}' ${path.module}/../ansible/playbook.yml
