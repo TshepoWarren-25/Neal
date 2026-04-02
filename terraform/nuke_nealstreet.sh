@@ -7,10 +7,21 @@
 REGION="us-east-1"
 set -e
 
-echo "🚨🚨🚨 STARTING GLOBAL DIAGNOSTIC CLEANUP [TOTAL SCORCH] 🚨🚨🚨"
+# 1. UNIVERSAL INSTANCE TERMINATION (Tag-Based)
+# We find anything with 'nealstreet' in the Name, regardless of VPC.
+# This catches instances that might have leaked into the Default VPC.
+echo "🔍 Searching for all instances tagged with 'nealstreet'..."
+UNIVERSAL_IDS=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=nealstreet*" "Name=instance-state-name,Values=pending,running,stopping,stopped" --query "Reservations[].Instances[].InstanceId" --output text --region "$REGION")
 
-# 1. Stop Auto-Scaling Recreation
-# We delete ASGs and Launch Templates FIRST, so no new instances are launched while we work.
+if [ ! -z "$UNIVERSAL_IDS" ] && [ "$UNIVERSAL_IDS" != "None" ]; then
+    echo "🚨 FOUND GHOST INSTANCES: $UNIVERSAL_IDS. Terminating now..."
+    aws ec2 terminate-instances --instance-ids $UNIVERSAL_IDS --region "$REGION" > /dev/null
+    aws ec2 wait instance-terminated --instance-ids $UNIVERSAL_IDS --region "$REGION"
+    sleep 30
+fi
+
+# 2. Stop Auto-Scaling Recreation
+# We delete ASGs and Launch Templates NEXT, so no new instances are launched while we work.
 echo "Finding all Auto Scaling Groups..."
 ASG_NAMES=$(aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[].AutoScalingGroupName" --output text --region "$REGION")
 for ASG in $ASG_NAMES; do
@@ -70,15 +81,16 @@ if [ ! -z "$NAT_GW_IDS" ]; then
     done
 fi
 
-# 5. Clean ALL Load Balancers
-echo "Finding ALL Load Balancers..."
-ALB_ARNS=$(aws elbv2 describe-load-balancers --query "LoadBalancers[].LoadBalancerArn" --output text --region "$REGION")
+# 4. Clean ALL Load Balancers (Universal Tag Search)
+# This finds anything with 'nealST' name prefix, even if existing in Default VPC.
+echo "Finding all Load Balancers with 'nealST' prefix..."
+ALB_ARNS=$(aws elbv2 describe-load-balancers --query "LoadBalancers[?contains(LoadBalancerName, 'nealST')].LoadBalancerArn" --output text --region "$REGION")
 for ALB in $ALB_ARNS; do
     echo "Deleting Load Balancer: $ALB"
     aws elbv2 delete-load-balancer --load-balancer-arn "$ALB" --region "$REGION" || true
 done
 
-if [ ! -z "$ALB_ARNS" ]; then
+if [ ! -z "$ALB_ARNS" ] && [ "$ALB_ARNS" != "None" ]; then
     echo "⏳ Waiting for ALBs to finish deleting..."
     aws elbv2 wait load-balancers-deleted --load-balancer-arns $ALB_ARNS --region "$REGION" > /dev/null 2>&1 || true
     echo "⏳ Adding 60s cooldown for ALB Ghost ENIs to drop..."
@@ -169,11 +181,17 @@ for VPC_ID in $ALL_NON_DEFAULT_VPCS; do
     fi
 done
 
-# 9. Clean Log Groups and Keys
+# 9. UNIVERSAL LOG GROUP & KEY CLEANUP
+echo "Purging all Log Groups and Keys with 'nealstreet' in the Name..."
 aws logs describe-log-groups --query "logGroups[?contains(logGroupName, 'nealstreet')].logGroupName" --output text --region "$REGION" | xargs -r -n1 aws logs delete-log-group --log-group-name --region "$REGION" || true
-KEYS=$(aws ec2 describe-key-pairs --query "KeyPairs[].KeyName" --output text --region "$REGION")
-for KEY in $KEYS; do
-    aws ec2 delete-key-pair --key-name "$KEY" --region "$REGION" || true
+
+# 10. UNIVERSAL SECURITY GROUP CLEANUP (Tag-Based)
+# Last resort for any groups that leaked into the Default VPC
+echo "🔍 Searching for any orphaned Security Groups named 'nealST'..."
+GHOST_SGS=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=nealST*" --query "SecurityGroups[].GroupId" --output text --region "$REGION")
+for SG in $GHOST_SGS; do
+    echo "Deleting Ghost Security Group: $SG"
+    aws ec2 delete-security-group --group-id "$SG" --region "$REGION" || true
 done
 
 echo "✅ GLOBAL DIAGNOSTIC PURGE COMPLETE: Your landing zone is clean."
