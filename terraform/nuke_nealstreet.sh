@@ -81,7 +81,17 @@ for VPC_ID in $ALL_NON_DEFAULT_VPCS; do
             aws ec2 delete-internet-gateway --internet-gateway-id "$igw" --region "$REGION" || true
         done
 
-        # 4e. Scrub Subnets
+        # 4e. Scrub Security Groups (Crucial for unblocking VPC deletion)
+        # We must revoke rules first to break inter-group dependencies
+        SG_IDS=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" --query "SecurityGroups[?GroupName!='default'].GroupId" --output text --region "$REGION")
+        for SG in $SG_IDS; do
+            echo "Scrubbing Security Group: $SG"
+            aws ec2 describe-security-group-rules --filters "Name=group-id,Values=$SG" --query "SecurityGroupRules[?IsEgress==\`false\`].SecurityGroupRuleId" --output text --region "$REGION" | xargs -r aws ec2 revoke-security-group-ingress --group-id "$SG" --security-group-rule-ids --region "$REGION" || true
+            aws ec2 describe-security-group-rules --filters "Name=group-id,Values=$SG" --query "SecurityGroupRules[?IsEgress==\`true\`].SecurityGroupRuleId" --output text --region "$REGION" | xargs -r aws ec2 revoke-security-group-egress --group-id "$SG" --security-group-rule-ids --region "$REGION" || true
+            aws ec2 delete-security-group --group-id "$SG" --region "$REGION" || true
+        done
+
+        # 4f. Scrub Subnets
         aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query "Subnets[].SubnetId" --output text --region "$REGION" | xargs -r aws ec2 delete-subnet --subnet-id --region "$REGION" || true
 
         # Wait between passes
