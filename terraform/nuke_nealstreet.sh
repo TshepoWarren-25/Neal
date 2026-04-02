@@ -110,13 +110,31 @@ for VPC_ID in $ALL_NON_DEFAULT_VPCS; do
         done
 
         # 5f. Scrub Subnets
-        aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query "Subnets[].SubnetId" --output text --region "$REGION" | xargs -r aws ec2 delete-subnet --subnet-id --region "$REGION" || true
+        SUB_IDS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query "Subnets[].SubnetId" --output text --region "$REGION")
+        for SUB in $SUB_IDS; do
+            echo "Deleting Subnet: $SUB"
+            aws ec2 delete-subnet --subnet-id "$SUB" --region "$REGION" || true
+        done
 
         # 5g. Scrub Route Tables (Except Main)
-        aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" --query "RouteTables[?Associations[0].Main!=\`true\`].RouteTableId" --output text --region "$REGION" | xargs -r -n1 aws ec2 delete-route-table --route-table-id --region "$REGION" || true
+        RTB_IDS=$(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" --query "RouteTables[?Associations[0].Main!=\`true\`].RouteTableId" --output text --region "$REGION")
+        for RTB in $RTB_IDS; do
+            echo "Cleaning Route Table: $RTB"
+            ASSOC_IDS=$(aws ec2 describe-route-tables --route-table-ids "$RTB" --query "RouteTables[0].Associations[].RouteTableAssociationId" --output text --region "$REGION")
+            for ASSOC in $ASSOC_IDS; do
+                if [ "$ASSOC" != "None" ]; then
+                    aws ec2 disassociate-route-table --association-id "$ASSOC" --region "$REGION" || true
+                fi
+            done
+            aws ec2 delete-route-table --route-table-id "$RTB" --region "$REGION" || true
+        done
 
         # 5h. Scrub Network ACLs (Except Default)
-        aws ec2 describe-network-acls --filters "Name=vpc-id,Values=$VPC_ID" --query "NetworkAcls[?IsDefault==\`false\`].NetworkAclId" --output text --region "$REGION" | xargs -r -n1 aws ec2 delete-network-acl --network-acl-id --region "$REGION" || true
+        ACL_IDS=$(aws ec2 describe-network-acls --filters "Name=vpc-id,Values=$VPC_ID" --query "NetworkAcls[?IsDefault==\`false\`].NetworkAclId" --output text --region "$REGION")
+        for ACL in $ACL_IDS; do
+            echo "Deleting NACL: $ACL"
+            aws ec2 delete-network-acl --network-acl-id "$ACL" --region "$REGION" || true
+        done
 
         # Wait between passes
         sleep 10
