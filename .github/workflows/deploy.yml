@@ -55,6 +55,13 @@ jobs:
         run: terraform init
         working-directory: ./terraform
 
+      - name: 🧹 Sync Terraform State (Reset Database)
+        working-directory: ./terraform
+        run: |
+          echo "Syncing S3 state with nuked infrastructure..."
+          terraform state list | xargs -r terraform state rm || true
+        shell: bash
+
       - name: Terraform Apply
         run: terraform apply -auto-approve
         working-directory: ./terraform
