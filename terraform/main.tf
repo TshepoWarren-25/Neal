@@ -1,8 +1,12 @@
+# --- Provider Configuration ---
+# Configures the AWS Provider with the region specified in variables.tf.
 provider "aws" {
   region = var.aws_region
 }
 
 # --- VPC Configuration ---
+# Provisioning a Virtual Private Cloud (VPC) to provide an isolated virtual network environment.
+# We enable DNS hostnames and support to allow EC2 instances to resolve AWS service endpoints.
 resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
@@ -15,10 +19,11 @@ resource "aws_vpc" "main" {
     owner       = var.owner
     cost_center = "payments"
   }
-
-
 }
 
+# --- Internet Gateway ---
+# Attaches an Internet Gateway to the VPC to allow communication between 
+# resources in the VPC and the internet.
 resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
 
@@ -27,6 +32,8 @@ resource "aws_internet_gateway" "main" {
   }
 }
 
+# --- Public Subnets ---
+# Subnet 01: Creates the first public subnet in the first specified Availability Zone.
 resource "aws_subnet" "public_1" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.1.0/24"
@@ -37,10 +44,10 @@ resource "aws_subnet" "public_1" {
     Name        = "nealstreet-${var.environment}-subnet-01"
     environment = var.environment
   }
-
-
 }
 
+# Subnet 02: Creates the second public subnet in the second specified Availability Zone.
+# This ensures regional high availability for the ALB.
 resource "aws_subnet" "public_2" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.2.0/24"
@@ -51,10 +58,11 @@ resource "aws_subnet" "public_2" {
     Name        = "nealstreet-${var.environment}-subnet-02"
     environment = var.environment
   }
-
-
 }
 
+# --- Public Route Table ---
+# Defines the routing rules for the public subnets, 
+# pointing all non-local traffic (0.0.0.0/0) to the Internet Gateway.
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
 
@@ -68,6 +76,8 @@ resource "aws_route_table" "public" {
   }
 }
 
+# --- Route Table Associations ---
+# Explicitly links the public subnets to the public route table for internet access.
 resource "aws_route_table_association" "public_1" {
   subnet_id      = aws_subnet.public_1.id
   route_table_id = aws_route_table.public.id
@@ -79,9 +89,11 @@ resource "aws_route_table_association" "public_2" {
 }
 
 # --- Security Groups ---
-# ALB Security Group: Perimeter security. Allows HTTP from any source.
+
+# ALB Security Group: Acts as the perimeter firewall.
+# Only permits stateful HTTP (port 80) traffic from the public internet.
 resource "aws_security_group" "alb" {
-  name_prefix = "nealST-${var.environment}-alb-sg-01-" # Using short prefix for ALB
+  name_prefix = "nealST-${var.environment}-alb-sg-01-"
   description = "Allow HTTP inbound to ALB"
   vpc_id      = aws_vpc.main.id
 
@@ -98,18 +110,16 @@ resource "aws_security_group" "alb" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
-
-
 }
 
-# Web Server Security Group: Application tier security.
-# Restricts traffic so that only the ALB can reach the web service.
+# Web Server Security Group: Protects the application tier.
+# Only permits application traffic originating from the ALB Security Group (Perimeter).
 resource "aws_security_group" "web" {
-  name_prefix = "nealST-${var.environment}-web-sg-01-" # Using short prefix for Web
+  name_prefix = "nealST-${var.environment}-web-sg-01-"
   description = "Allow traffic from ALB only"
   vpc_id      = aws_vpc.main.id
 
-  # Permit incoming requests on the application port, but ONLY from the ALB's SG.
+  # Application Inbound: Port 8080 (defined in vars) restricted to ALB source.
   ingress {
     from_port       = var.app_port
     to_port         = var.app_port
@@ -117,8 +127,7 @@ resource "aws_security_group" "web" {
     security_groups = [aws_security_group.alb.id]
   }
 
-  # SSH access: Provisioned for Ansible. In a production setting, this CIDR
-  # would be restricted to a management subnet or Bastion host.
+  # SSH Management Inbound: Port 22 allowed for Ansible configuration. 
   ingress {
     from_port   = 22
     to_port     = 22
@@ -126,18 +135,17 @@ resource "aws_security_group" "web" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Allow all outbound traffic for package updates and log shipping.
+  # All Outbound: Permitted for log shipping and software updates.
   egress {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
-
-
 }
 
-# --- ALB ---
+# --- Application Load Balancer (ALB) ---
+# Distributes application traffic across multiple healthy targets.
 resource "aws_lb" "main" {
   name               = "nealST-${var.environment}-alb-01"
   internal           = false
@@ -148,10 +156,10 @@ resource "aws_lb" "main" {
   tags = {
     Name = "nealstreet-${var.environment}-alb-01"
   }
-
-
 }
 
+# --- Target Group & Health Checks ---
+# Defines the specific destination for forwarded traffic and monitors health status.
 resource "aws_lb_target_group" "web" {
   name     = "nealST-${var.environment}-tg-01"
   port     = var.app_port
@@ -165,10 +173,10 @@ resource "aws_lb_target_group" "web" {
     healthy_threshold   = 2
     unhealthy_threshold = 2
   }
-
-
 }
 
+# --- ALB Listener ---
+# Binds the ALB to port 80 and manages the default forwarding behavior.
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.main.arn
   port              = "80"
@@ -178,11 +186,12 @@ resource "aws_lb_listener" "http" {
     type             = "forward"
     target_group_arn = aws_lb_target_group.web.arn
   }
-
-
 }
 
-# --- Compute Layer (ASG) ---
+# --- IAM Roles & Profiles ---
+
+# EC2 Execution Role:
+# Grants instances permissions to write to CloudWatch and read from SSM.
 resource "aws_iam_role" "web_role" {
   name_prefix = "nealST-${var.environment}-web-role-01-"
 
@@ -198,51 +207,50 @@ resource "aws_iam_role" "web_role" {
       },
     ]
   })
-
-
 }
 
-# Managed policies for SSM Session Manager and CloudWatch Agent.
+# Inherited Policies for Management (SSM) and Logging (CloudWatch Agent).
 resource "aws_iam_role_policy_attachment" "ssm" {
   role       = aws_iam_role.web_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-
-
 }
 
 resource "aws_iam_role_policy_attachment" "logs" {
   role       = aws_iam_role.web_role.name
   policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
-
-
 }
 
-# --- Access Management ---
+# --- SSH Key & Access Management ---
+
+# Local Private Key generation (RSA 4096).
 resource "tls_private_key" "auto" {
   algorithm = "RSA"
   rsa_bits  = 4096
 }
 
-# Save the auto-generated private key to the path expected by Ansible.
+# Local file storage for the generated key (used by Ansible).
 resource "local_file" "auto_private_key" {
-  count    = var.ssh_public_key == "" ? 1 : 0
-  content  = tls_private_key.auto.private_key_pem
-  filename = abspath("${path.module}/${var.ssh_private_key_path}")
+  count           = var.ssh_public_key == "" ? 1 : 0
+  content         = tls_private_key.auto.private_key_pem
+  filename        = abspath("${path.module}/${var.ssh_private_key_path}")
   file_permission = "0600"
 }
 
-# Key Pair for SSH access: Uses either the provided key or the auto-generated one.
+# AWS Key Pair registration for EC2 instance injection.
 resource "aws_key_pair" "deployer" {
   key_name   = "nealST-${var.environment}-key-01"
   public_key = var.ssh_public_key != "" ? var.ssh_public_key : tls_private_key.auto.public_key_openssh
 }
 
+# Wrapping the IAM Role for EC2 instance assignment.
 resource "aws_iam_instance_profile" "web_profile" {
   name_prefix = "nealST-${var.environment}-web-profile-01-"
-  role = aws_iam_role.web_role.name
+  role        = aws_iam_role.web_role.name
 }
 
-# Launch Template: Defines the blueprints for the EC2 instances.
+# --- Compute: Launch Template & ASG ---
+
+# Blueprint for Scaling: Defines instance size, image, and network security.
 resource "aws_launch_template" "web" {
   name_prefix   = "nealST-${var.environment}-web-lt-01-"
   image_id      = var.ami_id
@@ -254,11 +262,10 @@ resource "aws_launch_template" "web" {
   }
 
   network_interfaces {
-    associate_public_ip_address = true # Required for outbound internet without NAT Gateway
+    associate_public_ip_address = true
     security_groups             = [aws_security_group.web.id]
   }
 
-  # Security Hardening: Enforce IMDSv2 strictly.
   metadata_options {
     http_endpoint               = "enabled"
     http_tokens                 = "required"
@@ -267,7 +274,6 @@ resource "aws_launch_template" "web" {
 
   user_data = base64encode(<<-EOF
               #!/bin/bash
-              # Update packages upon boot as a security baseline.
               yum update -y
               EOF
   )
@@ -277,7 +283,7 @@ resource "aws_launch_template" "web" {
   }
 }
 
-# Auto Scaling Group: Manages instance lifecycle and scaling.
+# Lifecycle Management: Maintains the desired fleet of instances across AZs.
 resource "aws_autoscaling_group" "web" {
   name_prefix         = "nealST-${var.environment}-asg-01-"
   desired_capacity    = 1
@@ -304,62 +310,72 @@ resource "aws_autoscaling_group" "web" {
   }
 }
 
-# --- Observability ---
+# --- Logging & Monitoring ---
+
+# Centralized Log Storage for the application.
 resource "aws_cloudwatch_log_group" "app_logs" {
   name              = "/aws/ec2/nealstreet-${var.environment}-web-01"
   retention_in_days = 7
-
-
 }
 
-# --- Secrets (Demo) ---
+# --- SECRETS & ORCHESTRATION ---
+
+# Application Secrets:
+# Manages encrypted secret strings in AWS Systems Manager.
+# 'ignore_changes' is used because these values are typically managed out-of-band.
 resource "aws_ssm_parameter" "app_secret" {
   name        = "/nealstreet/${var.environment}/web/app_secret"
   description = "Demo application secret"
   type        = "SecureString"
-  value       = "FIXME_OVERRIDE_OUTSIDE_REPO" # Placeholder, user would set this manually or via CI
-  overwrite   = true                         # Allow repeated runs to update the value
+  value       = "FIXME_OVERRIDE_OUTSIDE_REPO"
+  overwrite   = true
   
   lifecycle {
     ignore_changes = all
   }
 }
 
-# --- Wait for Instance Readiness ---
-# Give the ASG enough time to start the instances and assign public IPs.
+# --- Provisioning Gates ---
+
+# Readiness Wait:
+# Pauses the workflow for 120 seconds. This is a vital 'safety gate' to allow 
+# the Auto Scaling Group (ASG) to fully boot the EC2 instance and assign its 
+# public IP before Ansible attempts to connect.
 resource "time_sleep" "wait_for_instance" {
-  depends_on = [aws_autoscaling_group.web]
+  depends_on      = [aws_autoscaling_group.web]
   create_duration = "120s"
 }
 
-# --- Ansible Deployment Integration ---
+# Dynamic Instance Discovery:
+# Queries the AWS API to find the Public IP of the running web instance.
 data "aws_instances" "web" {
   instance_tags = {
     Name = "nealstreet-${var.environment}-web-01"
   }
   instance_state_names = ["running"]
-  
-  # Ensure we wait for the ASG to actually launch the instance.
-  depends_on = [time_sleep.wait_for_instance]
+  depends_on           = [time_sleep.wait_for_instance]
 }
 
-# Generate the Ansible inventory file.
+# Ansible Inventory Generation:
+# Dynamically creates a standard INI inventory file. This translates 
+# the AWS-native data into a format that Ansible understands.
 resource "local_file" "ansible_inventory" {
   content  = "[webservers]\n${try(data.aws_instances.web.public_ips[0], "127.0.0.1")} ansible_user=ec2-user ansible_ssh_private_key_file=${var.ssh_private_key_path}"
   filename = "${path.module}/../ansible/inventory.ini"
 }
 
-# Trigger Ansible Playbook execution.
+# --- ANSIBLE PROVISIONER ---
+# This is the bridge between Infrastructure and Configuration.
+# It triggers the application deployment once the network and compute are ready.
 resource "null_resource" "ansible_provisioner" {
   triggers = {
-    # Re-run if the instance IP changes or if the playbook content changes.
-    instance_ip = try(data.aws_instances.web.public_ips[0], "none")
+    instance_ip   = try(data.aws_instances.web.public_ips[0], "none")
     playbook_hash = filemd5("${path.module}/../ansible/playbook.yml")
   }
 
   provisioner "local-exec" {
-    # Dynamically find the Public IP at runtime just before Ansible starts.
-    # This solves the race condition where the ASG hasn't assigned an IP yet during the Plan stage.
+    # Inline subshell to ensure we have the absolute latest Public IP.
+    # We pass CloudWatch and SSM identities as external variables to the playbook.
     command = <<EOT
       PUBLIC_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=nealstreet-${var.environment}-web-01" "Name=instance-state-name,Values=running" --query "Reservations[].Instances[0].PublicIpAddress" --output text --region ${var.aws_region})
       echo "[webservers]\n$PUBLIC_IP ansible_user=ec2-user ansible_ssh_private_key_file=${var.ssh_private_key_path}" > ${path.module}/../ansible/inventory.ini

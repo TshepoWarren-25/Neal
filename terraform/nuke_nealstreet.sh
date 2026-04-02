@@ -1,16 +1,18 @@
 #!/bin/bash
 # --- DIAGNOSTIC NUCLEAR NUKE ---
-# This script deletes ALL non-default resources globally and includes an auto-diagnostic
-# dump if VPC deletion fails, so we can finally see what's blocking it.
+# Purpose: This script performs a global scrub of non-default AWS resources in us-east-1.
+# It is designed to be destructive and used for resetting development environments to zero.
+# It includes recursive passes to handle resource dependencies (like subnets and route tables).
 
 REGION="us-east-1"
-# No project prefixes - we delete EVERYTHING that isn't default.
 
+# Exit immediately if a command fails (unless caught by || true)
 set -e
 
 echo "🚨🚨🚨 STARTING GLOBAL DIAGNOSTIC CLEANUP 🚨🚨🚨"
 
-# 1. Terminate All instances in non-default VPCs
+# 1. Terminate All active EC2 instances in non-default VPCs
+# Instances must be terminated before their VPCs or ENIs can be deleted.
 echo "Finding all active EC2 instances in non-default VPCs..."
 ALL_NON_DEFAULT_VPCS=$(aws ec2 describe-vpcs --query "Vpcs[?IsDefault==\`false\`].VpcId" --output text --region "$REGION")
 
@@ -24,6 +26,7 @@ for VPC in $ALL_NON_DEFAULT_VPCS; do
 done
 
 # 2. Delete ALL NAT Gateways
+# NAT Gateways can take several minutes to delete and block VPC/Subnet deletion.
 echo "Finding ALL NAT Gateways..."
 NAT_GW_IDS=$(aws ec2 describe-nat-gateways --filter "Name=state,Values=pending,available,deleting" --query "NatGateways[].NatGatewayId" --output text --region "$REGION")
 for NAT in $NAT_GW_IDS; do
@@ -31,6 +34,7 @@ for NAT in $NAT_GW_IDS; do
     aws ec2 delete-nat-gateway --nat-gateway-id "$NAT" --region "$REGION" || true
 done
 
+# Wait for NAT Gateways to reach 'deleted' status before proceeding.
 if [ ! -z "$NAT_GW_IDS" ]; then
     echo "⏳ Waiting for NAT Gateways to reach 'deleted' state (Up to 5 mins)..."
     for i in {1..30}; do
@@ -40,7 +44,8 @@ if [ ! -z "$NAT_GW_IDS" ]; then
     done
 fi
 
-# 3. Clean ALL Load Balancers (No Name Filters)
+# 3. Clean ALL Load Balancers
+# ALB deletion often leaves "Ghost ENIs" which can take a minute to release.
 echo "Finding ALL Load Balancers..."
 ALB_ARNS=$(aws elbv2 describe-load-balancers --query "LoadBalancers[].LoadBalancerArn" --output text --region "$REGION")
 for ALB in $ALB_ARNS; do
@@ -55,12 +60,15 @@ if [ ! -z "$ALB_ARNS" ]; then
 fi
 
 # 4. Clean ALL Target Groups
+# These should be deleted after the Load Balancers that use them.
 TG_ARNS=$(aws elbv2 describe-target-groups --query "TargetGroups[].TargetGroupArn" --output text --region "$REGION")
 for TG in $TG_ARNS; do
     aws elbv2 delete-target-group --target-group-arn "$TG" --region "$REGION" || true
 done
 
 # 5. START RECURSIVE NETWORK SCRUB (5 PASSES)
+# Network resources have complex circular dependencies. Sequential passes ensure
+# that as one resource is freed, its dependent can be deleted in the next pass.
 echo "🔄 Starting 5-pass recursive network scrub..."
 
 for VPC_ID in $ALL_NON_DEFAULT_VPCS; do
@@ -69,7 +77,7 @@ for VPC_ID in $ALL_NON_DEFAULT_VPCS; do
     for pass in {1..5}; do
         echo "Pass $pass: Scrubbing dependencies for VPC $VPC_ID..."
         
-        # 5a. Release Elastic IPs
+        # 5a. Release Elastic IPs (Must be disassociated first)
         EIP_ASSOCS=$(aws ec2 describe-addresses --filters "Name=domain,Values=vpc" --query "Addresses[?InstanceId!=null || AssociationId!=null].AssociationId" --output text --region "$REGION")
         for ASSOC in $EIP_ASSOCS; do 
             aws ec2 disassociate-address --association-id "$ASSOC" --region "$REGION" || true
@@ -79,11 +87,12 @@ for VPC_ID in $ALL_NON_DEFAULT_VPCS; do
             aws ec2 release-address --allocation-id "$ALLOC" --region "$REGION" || true
         done
 
-        # 5b. Scrub Endpoints and Peering
+        # 5b. Scrub VPC Endpoints and Peering Connections
         aws ec2 describe-vpc-endpoints --filters "Name=vpc-id,Values=$VPC_ID" --query "VpcEndpoints[].VpcEndpointId" --output text --region "$REGION" | xargs -r aws ec2 delete-vpc-endpoints --vpc-endpoint-ids --region "$REGION" || true
         aws ec2 describe-vpc-peering-connections --filters "Name=requester-vpc-info.vpc-id,Values=$VPC_ID" --query "VpcPeeringConnections[].VpcPeeringConnectionId" --output text --region "$REGION" | xargs -r aws ec2 delete-vpc-peering-connection --vpc-peering-connection-id --region "$REGION" || true
 
-        # 5c. Scrub ENIs (Network Interfaces)
+        # 5c. Scrub Network Interfaces (ENIs)
+        # ENIs often block VPC deletion if they are still 'attached' to dead instances or ALBs.
         ENI_IDS=$(aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$VPC_ID" --query "NetworkInterfaces[].NetworkInterfaceId" --output text --region "$REGION")
         for ENI in $ENI_IDS; do
             ATTACH_ID=$(aws ec2 describe-network-interfaces --network-interface-ids "$ENI" --query "NetworkInterfaces[0].Attachment.AttachmentId" --output text --region "$REGION")
@@ -93,13 +102,15 @@ for VPC_ID in $ALL_NON_DEFAULT_VPCS; do
             aws ec2 delete-network-interface --network-interface-id "$ENI" --region "$REGION" || true
         done
 
-        # 5d. Scrub Gateways
+        # 5d. Scrub Internet Gateways
+        # Gateways must be detached from the VPC before they can be deleted.
         aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$VPC_ID" --query "InternetGateways[].InternetGatewayId" --output text --region "$REGION" | while read igw; do
             aws ec2 detach-internet-gateway --internet-gateway-id "$igw" --vpc-id "$VPC_ID" --region "$REGION" || true
             aws ec2 delete-internet-gateway --internet-gateway-id "$igw" --region "$REGION" || true
         done
 
         # 5e. Scrub Security Groups (Crucial for unblocking VPC deletion)
+        # All rules must be revoked to break cross-group dependencies.
         SG_IDS=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" --query "SecurityGroups[?GroupName!='default'].GroupId" --output text --region "$REGION")
         for SG in $SG_IDS; do
             aws ec2 describe-security-group-rules --filters "Name=group-id,Values=$SG" --query "SecurityGroupRules[?IsEgress==\`false\`].SecurityGroupRuleId" --output text --region "$REGION" | xargs -r -n1 aws ec2 revoke-security-group-ingress --group-id "$SG" --region "$REGION" --security-group-rule-ids > /dev/null 2>&1 || true
@@ -117,6 +128,7 @@ for VPC_ID in $ALL_NON_DEFAULT_VPCS; do
         done
 
         # 5g. Scrub Route Tables (Except Main)
+        # Tables must be disassociated from subnets before deletion.
         RTB_IDS=$(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" --query "RouteTables[?Associations[0].Main!=\`true\`].RouteTableId" --output text --region "$REGION")
         for RTB in $RTB_IDS; do
             echo "Cleaning Route Table: $RTB"
@@ -136,13 +148,13 @@ for VPC_ID in $ALL_NON_DEFAULT_VPCS; do
             aws ec2 delete-network-acl --network-acl-id "$ACL" --region "$REGION" || true
         done
 
-        # Wait between passes
+        # Wait between passes to allow AWS API to propagate changes.
         sleep 10
     done
 
     # 6. Final VPC deletion attempt with DIAGNOSTIC DUMP
+    # If this fails, we output tables of everything remaining in the VPC.
     echo "Final VPC deletion attempt: $VPC_ID"
-    # We turn off exit-on-error just for this command so we can catch it
     set +e 
     aws ec2 delete-vpc --vpc-id "$VPC_ID" --region "$REGION"
     DELETE_STATUS=$?
@@ -177,6 +189,7 @@ for VPC_ID in $ALL_NON_DEFAULT_VPCS; do
 done
 
 # 7. Clean Log Groups and Keys
+# Final cleanup of resources existing outside the VPC scope.
 aws logs describe-log-groups --query "logGroups[?contains(logGroupName, 'nealstreet')].logGroupName" --output text --region "$REGION" | xargs -r -n1 aws logs delete-log-group --log-group-name --region "$REGION" || true
 KEYS=$(aws ec2 describe-key-pairs --query "KeyPairs[].KeyName" --output text --region "$REGION")
 for KEY in $KEYS; do
